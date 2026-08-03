@@ -47,3 +47,4 @@ Ye app **poori tarah frontend-only** hai — sab data (shops, products, stock, b
 - Real barcode scanning library (camera access ke saath)
 
 Ye deploy hone ke baad ek **shareable demo/prototype** ban jaayega jo investors, potential shop owners, ya testers ko dikhaya ja sakta hai — lekin production business ke liye backend zaroori hai.
+
