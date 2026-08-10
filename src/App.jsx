@@ -11,6 +11,7 @@ import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   BarChart, Bar, CartesianGrid, PieChart, Pie, Cell
 } from "recharts";
+import { supabase } from "./supabaseClient";
 
 /* ============================================================================
    FILE: data/mockData.js
@@ -271,6 +272,29 @@ const scopeLabel = (scope) => {
   return `${levelLabel}: ${scope.valueLabel || scope.value}${catLabel}`;
 };
 
+// ---- Supabase row <-> app-shape mappers ----
+// DB columns are snake_case; the rest of the app (all the components below)
+// expects the camelCase shape that used to come from the mock data. These
+// keep that boundary in one place so nothing else has to change.
+const shopFromRow = (row, products, reviews) => ({
+  ...row,
+  isBlocked: row.is_blocked,
+  isClaimed: row.is_claimed,
+  premiumReviews: row.premium_reviews,
+  flashDeal: row.flash_deal,
+  products: (products || []).filter((p) => p.shop_id === row.id).map(productFromRow),
+  reviews: (reviews || []).filter((r) => r.shop_id === row.id).map(reviewFromRow),
+});
+const productFromRow = (row) => ({ ...row, lastUpdated: new Date(row.last_updated).getTime() });
+const reviewFromRow = (row) => ({ id: row.id, user: row.user_name, rating: row.rating, text: row.text, reply: row.reply });
+const bidFromRow = (row, offers, shopsById) => ({
+  id: row.id, customer: row.customer_name, item: row.item, budget: Number(row.budget),
+  area: row.area, status: row.status, createdAt: new Date(row.created_at).getTime(),
+  offers: (offers || []).filter((o) => o.bid_id === row.id).map((o) => ({
+    shopId: o.shop_id, shopName: shopsById[o.shop_id]?.name || "Shop", price: Number(o.price), message: o.message,
+  })),
+});
+
 /* ============================================================================
    FILE: components/InterstitialAd.jsx
 ============================================================================ */
@@ -525,7 +549,6 @@ function ShopCard({ shop, onOpen, distanceLabel }) {
   );
 }
 
-// Shows a single matched product plus the nearest shop that stocks it
 function ProductResultCard({ product, shop, distanceLabel, onOpenShop }) {
   const call = (e) => { e.stopPropagation(); window.open(`tel:${shop.phone}`); };
   const whatsapp = (e) => { e.stopPropagation(); window.open(`https://wa.me/91${shop.phone}`); };
@@ -561,15 +584,8 @@ function ProductResultCard({ product, shop, distanceLabel, onOpenShop }) {
 
 /* ============================================================================
    FILE: components/SponsoredLoadingCard.jsx
-   Shown for a brief moment while search results "load" — turns an otherwise
-   dead loading spinner into paid ad inventory. Mixes ShopNear's own demo
-   brand ads with real shop-bought "Search Ads", picked via a simple
-   fair-rotation counter (session-scoped) so no single paid ad hogs the slot.
 ============================================================================ */
 
-// Session-scoped impression counter — lives outside React so it persists
-// across re-renders/remounts without needing global state. Real production
-// version of this would live server-side per campaign.
 const _adImpressionCounts = {};
 function pickFairAd(pool) {
   if (pool.length === 0) return null;
@@ -622,7 +638,6 @@ function SponsoredLoadingCard({ realAds = [], onReportAd }) {
    FILE: screens/DiscoverTab.jsx
 ============================================================================ */
 
-// searchMode: "smart" (shop first, product fallback) | "product" (product only) | "shop" (shop only)
 function DiscoverTab({ shops, user, onOpenShop, onAddShop, onOpenMyShop, location, onLocate, userCoords, onPriceCheck }) {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("All");
@@ -646,9 +661,8 @@ function DiscoverTab({ shops, user, onOpenShop, onAddShop, onOpenMyShop, locatio
 
   const q = query.trim().toLowerCase();
 
-  // Build results depending on mode + query
   let shopResults = [];
-  let productResults = []; // [{ product, shop }]
+  let productResults = [];
 
   if (!q) {
     shopResults = withDistance(liveShops);
@@ -660,7 +674,6 @@ function DiscoverTab({ shops, user, onOpenShop, onAddShop, onOpenMyShop, locatio
       .map((r) => ({ ...r, _dist: distanceKm(userCoords?.lat, userCoords?.lng, r.shop.lat, r.shop.lng) }))
       .sort((a, b) => (a._dist ?? 999) - (b._dist ?? 999));
   } else {
-    // smart: try shop name match first, else fall back to nearest shop with that product
     const shopMatches = liveShops.filter((s) => s.name.toLowerCase().includes(q));
     if (shopMatches.length > 0) {
       shopResults = withDistance(shopMatches);
@@ -700,7 +713,6 @@ function DiscoverTab({ shops, user, onOpenShop, onAddShop, onOpenMyShop, locatio
           </button>
         </div>
 
-        {/* 3-way search mode toggle */}
         <div className="flex bg-white/15 rounded-xl p-1 mt-3">
           {[
             { key: "smart", label: "Product ya Shop" },
@@ -901,9 +913,6 @@ function ShopDetail({ shop, onBack, onAddReview, currentUserName, onClaimShop })
 
 /* ============================================================================
    FILE: screens/PriceCheckScreen.jsx
-   Customer scanned something they just bought (or are about to) — show every
-   nearby shop that stocks the same item, cheapest first, with a clear
-   "you'd save ₹X here" comparison against what they paid.
 ============================================================================ */
 
 function PriceCheckScreen({ shops, userCoords, initialProductName, initialPrice, onBack, onOpenShop }) {
@@ -1279,12 +1288,15 @@ function LeaderboardScreen({ onBack, currentUser }) {
 function AddShopForm({ onBack, onSubmit, blockCheck }) {
   const [form, setForm] = useState({ name: "", category: CATEGORIES[0], area: AREAS[0], address: "", phone: "" });
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  const submit = () => {
+  const submit = async () => {
     if (!form.name || !form.address || form.phone.length !== 10) { setError("Sab fields sahi se bhariye"); return; }
     const blocked = blockCheck(form.phone, form.address);
     if (blocked) { setError("Yeh number ya address admin dwara block kiya gaya hai. Naya shop add nahi ho sakta."); return; }
-    onSubmit(form);
+    setSaving(true);
+    await onSubmit(form);
+    setSaving(false);
   };
 
   return (
@@ -1305,7 +1317,9 @@ function AddShopForm({ onBack, onSubmit, blockCheck }) {
         <input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Poora address" className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none bg-white" />
         <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value.replace(/\D/g, "").slice(0, 10) })} placeholder="Shop contact number" className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none bg-white" />
         {error && <div className="text-red-500 text-sm">{error}</div>}
-        <button onClick={submit} className="w-full bg-violet-600 text-white font-semibold py-3.5 rounded-xl">Add Shop — Go Live Instantly</button>
+        <button disabled={saving} onClick={submit} className="w-full bg-violet-600 disabled:opacity-50 text-white font-semibold py-3.5 rounded-xl">
+          {saving ? "Adding..." : "Add Shop — Go Live Instantly"}
+        </button>
       </div>
     </div>
   );
@@ -1315,9 +1329,6 @@ function AddShopForm({ onBack, onSubmit, blockCheck }) {
    FILE: components/BarcodeScanModal.jsx
 ============================================================================ */
 
-// Reusable camera-style scan modal. onDetected receives { code, name, suggestedPrice }
-// When the scanned code isn't in BARCODE_DB, name/suggestedPrice come back empty
-// so the owner can type them in manually.
 function BarcodeScanModal({ onClose, onDetected, subtitle }) {
   const [scanning, setScanning] = useState(true);
 
@@ -1470,11 +1481,11 @@ function MyShopDashboard({ shops, onBack, onUpdatePrice, onAddProduct, onOpenSel
 ============================================================================ */
 
 function SellFlow({ shop, onBack, onCompleteSale }) {
-  const [cart, setCart] = useState([]); // { productId, name, unit, price, qty, displayQty, lineTotal }
+  const [cart, setCart] = useState([]);
   const [showScan, setShowScan] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
   const [pickerQuery, setPickerQuery] = useState("");
-  const [pendingProduct, setPendingProduct] = useState(null); // weight/volume item awaiting quantity entry
+  const [pendingProduct, setPendingProduct] = useState(null);
   const [qtyInput, setQtyInput] = useState("");
   const [receipt, setReceipt] = useState(null);
 
@@ -1497,7 +1508,7 @@ function SellFlow({ shop, onBack, onCompleteSale }) {
     if (!amount || amount <= 0) return;
     const isVolume = pendingProduct.unit === "volume";
     const enteredIn = isVolume ? "ml" : "g";
-    const baseQty = amount / 1000; // convert g->kg or ml->L
+    const baseQty = amount / 1000;
     const existing = cart.find((c) => c.productId === pendingProduct.id);
     const totalBaseQty = (existing ? existing.baseQty : 0) + baseQty;
     if (totalBaseQty > pendingProduct.stock) {
@@ -1531,10 +1542,13 @@ function SellFlow({ shop, onBack, onCompleteSale }) {
     pickProduct(product);
   };
 
-  const finishSale = () => {
+  const [finishing, setFinishing] = useState(false);
+  const finishSale = async () => {
     if (cart.length === 0) return;
+    setFinishing(true);
     const bill = { id: genId("bill"), shopName: shop.name, items: cart, total, timestamp: Date.now() };
-    onCompleteSale(shop.id, cart);
+    await onCompleteSale(shop.id, cart);
+    setFinishing(false);
     setReceipt(bill);
   };
 
@@ -1610,8 +1624,8 @@ function SellFlow({ shop, onBack, onCompleteSale }) {
             <span className="text-gray-500">Total ({cart.length} items)</span>
             <span className="font-extrabold text-lg text-violet-600">{formatINR(total)}</span>
           </div>
-          <button onClick={finishSale} className="w-full bg-emerald-600 text-white font-bold py-3.5 rounded-xl flex items-center justify-center gap-2">
-            <Check size={18} /> OK — Finish Sale &amp; Generate Bill
+          <button disabled={finishing} onClick={finishSale} className="w-full bg-emerald-600 disabled:opacity-50 text-white font-bold py-3.5 rounded-xl flex items-center justify-center gap-2">
+            <Check size={18} /> {finishing ? "Saving..." : "OK — Finish Sale & Generate Bill"}
           </button>
         </div>
       )}
@@ -1804,493 +1818,4 @@ function AdminPanel({ shops, users, bids, salesLog, dataLicenses, blockedList, o
             <div className="text-[11px] text-gray-400 mt-1">Kaha kis area me sabse jyada demand/requests aa rahe hain.</div>
           </div>
 
-          <div className="bg-white rounded-2xl p-4 border border-gray-100">
-            <div className="font-bold text-sm mb-2 flex items-center gap-2"><PieIcon size={16} className="text-violet-600" /> Category-wise shop distribution</div>
-            <div className="h-48">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={categoryDist} dataKey="value" nameKey="name" innerRadius={40} outerRadius={70}>
-                    {categoryDist.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl p-4 border border-gray-100">
-            <div className="font-bold text-sm mb-2 flex items-center gap-2"><Award size={16} className="text-amber-500" /> Top performing shops</div>
-            {topShops.map((s, i) => (
-              <div key={s.id} className="flex justify-between items-center py-1.5 text-sm">
-                <span className="text-gray-600">{i + 1}. {s.name} <span className="text-gray-400 text-xs">({s.area})</span></span>
-                <span className="font-semibold text-amber-500 flex items-center gap-1"><Star size={12} fill="currentColor" /> {s.rating}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      {tab === "enterprise" && (
-        <EnterpriseTab shops={shops} salesLog={salesLog} dataLicenses={dataLicenses} onGenerateLicense={onGenerateLicense} onRevokeLicense={onRevokeLicense} />
-      )}
-    </div>
-  );
-}
-
-// Lets admin pick a data scope (shop / area / city / state / country + category),
-// preview it live, then mint a shareable code that external buyers (e.g. pharma
-// companies) can redeem in the "Data Portal" to view that exact slice of data.
-function EnterpriseTab({ shops, salesLog, dataLicenses, onGenerateLicense, onRevokeLicense }) {
-  const [level, setLevel] = useState("city");
-  const [category, setCategory] = useState("All");
-
-  const options = useMemo(() => {
-    const uniq = (arr) => [...new Set(arr)];
-    if (level === "shop") return shops.map((s) => ({ value: s.id, label: s.name }));
-    if (level === "area") return uniq(shops.map((s) => s.area)).map((v) => ({ value: v, label: v }));
-    if (level === "city") return uniq(shops.map((s) => s.city)).map((v) => ({ value: v, label: v }));
-    if (level === "state") return uniq(shops.map((s) => s.state)).map((v) => ({ value: v, label: v }));
-    return uniq(shops.map((s) => s.country)).map((v) => ({ value: v, label: v }));
-  }, [level, shops]);
-
-  const [value, setValue] = useState("");
-  useEffect(() => { setValue(options[0]?.value || ""); }, [level, options.length]); // eslint-disable-line
-
-  const scope = { level, value, category, valueLabel: options.find((o) => o.value === value)?.label };
-  const filtered = value ? filterSalesLog(salesLog, scope) : [];
-  const productData = aggregateByProduct(filtered);
-  const totalQty = filtered.reduce((a, l) => a + l.qty, 0);
-  const totalRevenue = filtered.reduce((a, l) => a + l.revenue, 0);
-
-  return (
-    <div className="px-5 mt-4 space-y-4">
-      <div className="bg-white rounded-2xl p-4 border border-gray-100">
-        <div className="font-bold text-sm mb-1 flex items-center gap-2"><IndianRupee size={16} className="text-emerald-600" /> Enterprise Data Access</div>
-        <div className="text-[11px] text-gray-400 mb-3">Manufacturers/distributors ko exact scope ka data bechiye — shop se lekar poore country tak.</div>
-
-        <div className="text-xs text-gray-500 font-medium mb-1">Geography level</div>
-        <div className="flex gap-1.5 mb-3 flex-wrap">
-          {["shop", "area", "city", "state", "country"].map((l) => (
-            <button key={l} onClick={() => setLevel(l)} className={`px-3 py-1.5 rounded-full text-[11px] font-semibold capitalize ${level === l ? "bg-violet-600 text-white" : "bg-gray-100 text-gray-500"}`}>{l}</button>
-          ))}
-        </div>
-
-        <div className="grid grid-cols-2 gap-2 mb-3">
-          <select value={value} onChange={(e) => setValue(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-sm">
-            {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-          <select value={category} onChange={(e) => setCategory(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-sm">
-            <option value="All">All Categories</option>
-            {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
-          </select>
-        </div>
-
-        <div className="bg-gray-50 rounded-xl p-3 mb-3">
-          <div className="text-[11px] text-gray-400 mb-2">Live preview — {scopeLabel(scope)}</div>
-          {productData.length === 0 ? (
-            <div className="text-center text-gray-400 text-xs py-4">Is scope me abhi koi sales data nahi hai.</div>
-          ) : (
-            <>
-              <div className="h-40">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={productData.slice(0, 6)}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="productName" tick={{ fontSize: 8 }} interval={0} angle={-15} textAnchor="end" height={40} />
-                    <YAxis tick={{ fontSize: 9 }} />
-                    <Tooltip />
-                    <Bar dataKey="qty" fill="#10B981" radius={[6, 6, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="flex justify-between text-xs mt-2 text-gray-500">
-                <span>Total units sold: <b className="text-gray-800">{totalQty}</b></span>
-                <span>Revenue: <b className="text-gray-800">{formatINR(totalRevenue)}</b></span>
-              </div>
-            </>
-          )}
-        </div>
-
-        <button
-          disabled={!value}
-          onClick={() => onGenerateLicense(scope)}
-          className="w-full bg-emerald-600 disabled:opacity-40 text-white font-semibold py-3 rounded-xl text-sm flex items-center justify-center gap-2"
-        >
-          <Send size={15} /> Generate Shareable Data Link
-        </button>
-      </div>
-
-      <div className="bg-white rounded-2xl p-4 border border-gray-100">
-        <div className="font-bold text-sm mb-3">Active Data Licenses</div>
-        {dataLicenses.length === 0 && <div className="text-center text-gray-400 text-xs py-4">Abhi tak koi link generate nahi hua.</div>}
-        <div className="space-y-2">
-          {dataLicenses.map((lic) => (
-            <div key={lic.id} className={`rounded-xl p-3 border ${lic.revoked ? "border-gray-100 bg-gray-50 opacity-60" : "border-emerald-100 bg-emerald-50"}`}>
-              <div className="flex justify-between items-start">
-                <div>
-                  <div className="text-xs font-semibold text-gray-800">{scopeLabel(lic)}</div>
-                  <div className="font-mono text-sm font-bold text-emerald-700 mt-0.5">{lic.code}</div>
-                  <div className="text-[10px] text-gray-400 mt-0.5">Created {timeAgo(lic.createdAt)}</div>
-                </div>
-                <div className="flex flex-col gap-1 items-end">
-                  <button
-                    onClick={() => { navigator.clipboard?.writeText(`shopnear.app/data/${lic.code}`); alert("Link copied: shopnear.app/data/" + lic.code); }}
-                    className="text-[10px] bg-white border border-gray-200 px-2 py-1 rounded-full font-semibold text-gray-600"
-                  >
-                    Copy Link
-                  </button>
-                  <button
-                    onClick={() => onRevokeLicense(lic.id)}
-                    className={`text-[10px] px-2 py-1 rounded-full font-semibold ${lic.revoked ? "bg-emerald-100 text-emerald-600" : "bg-red-100 text-red-500"}`}
-                  >
-                    {lic.revoked ? "Restore" : "Revoke"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ============================================================================
-   FILE: screens/DataPortal.jsx
-   External viewer — a pharma/FMCG buyer types the code they were given and
-   sees exactly (and only) the scope of data that code was licensed for.
-============================================================================ */
-
-function DataPortal({ license, salesLog, onBack }) {
-  const filtered = filterSalesLog(salesLog, license);
-  const productData = aggregateByProduct(filtered);
-  const totalQty = filtered.reduce((a, l) => a + l.qty, 0);
-  const totalRevenue = filtered.reduce((a, l) => a + l.revenue, 0);
-  const shopCount = new Set(filtered.map((l) => l.shopId)).size;
-
-  return (
-    <div className="min-h-screen bg-gray-50 pb-10">
-      <div className="bg-gradient-to-br from-emerald-600 to-teal-700 px-5 pt-6 pb-6 rounded-b-3xl text-white">
-        <button onClick={onBack} className="mb-3"><ArrowLeft size={20} /></button>
-        <div className="text-xs bg-white/20 inline-block px-2 py-1 rounded-full mb-2">LICENSED DATA VIEW</div>
-        <div className="text-xl font-extrabold">{scopeLabel(license)}</div>
-        <div className="text-white/80 text-xs mt-1">Code: {license.code}</div>
-      </div>
-
-      <div className="px-5 mt-4 grid grid-cols-3 gap-2">
-        <div className="bg-white rounded-2xl p-3 border border-gray-100 text-center">
-          <div className="text-lg font-extrabold text-emerald-600">{totalQty}</div>
-          <div className="text-[10px] text-gray-400">Units sold</div>
-        </div>
-        <div className="bg-white rounded-2xl p-3 border border-gray-100 text-center">
-          <div className="text-lg font-extrabold text-violet-600">{formatINR(totalRevenue)}</div>
-          <div className="text-[10px] text-gray-400">Revenue</div>
-        </div>
-        <div className="bg-white rounded-2xl p-3 border border-gray-100 text-center">
-          <div className="text-lg font-extrabold text-orange-500">{shopCount}</div>
-          <div className="text-[10px] text-gray-400">Shops</div>
-        </div>
-      </div>
-
-      <div className="px-5 mt-4">
-        <div className="bg-white rounded-2xl p-4 border border-gray-100">
-          <div className="font-bold text-sm mb-2 flex items-center gap-2"><BarChart3 size={16} className="text-emerald-600" /> Product-wise demand</div>
-          {productData.length === 0 ? (
-            <div className="text-center text-gray-400 text-sm py-6">Is scope me abhi data uplabdh nahi hai.</div>
-          ) : (
-            <>
-              <div className="h-52">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={productData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="productName" tick={{ fontSize: 8 }} interval={0} angle={-20} textAnchor="end" height={50} />
-                    <YAxis tick={{ fontSize: 9 }} />
-                    <Tooltip />
-                    <Bar dataKey="qty" fill="#059669" radius={[6, 6, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="mt-3 divide-y divide-gray-50">
-                {productData.map((p) => (
-                  <div key={p.productName} className="flex justify-between py-1.5 text-sm">
-                    <span className="text-gray-600">{p.productName}</span>
-                    <span className="font-semibold text-gray-800">{p.qty} units · {formatINR(p.revenue)}</span>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ============================================================================
-   FILE: App.jsx  (root component — wires everything above together)
-============================================================================ */
-
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [screen, setScreen] = useState("discover"); // discover | deals | feed | bid | profile | shopDetail | addShop | myShop | sell | leaderboard
-  const [activeShop, setActiveShop] = useState(null);
-  const [sellShopId, setSellShopId] = useState(null);
-  const [priceCheckSeed, setPriceCheckSeed] = useState({ name: "", price: "" });
-  const [showAd, setShowAd] = useState(false);
-  const [tabSwitches, setTabSwitches] = useState(0);
-  const [location, setLocation] = useState("Surat, Gujarat (default)");
-  const [userCoords, setUserCoords] = useState({ lat: 21.1702, lng: 72.8311 });
-
-  const [shops, setShops] = useState(INITIAL_SHOPS);
-  const [bids, setBids] = useState(INITIAL_BIDS);
-  const [feed, setFeed] = useState(INITIAL_FEED);
-  const [salesLog, setSalesLog] = useState(INITIAL_SALES_LOG);
-  const [dataLicenses, setDataLicenses] = useState([]);
-  const [searchAds, setSearchAds] = useState([]);
-  const [activeDataLicense, setActiveDataLicense] = useState(null);
-  const [users, setUsers] = useState([
-    { ...CURRENT_USER_SEED, isBlocked: false },
-    { id: "u2", name: "Raj (Medical)", phone: "9123456789", isBlocked: false },
-    { id: "u3", name: "Sundaram (Bakery)", phone: "9988776655", isBlocked: false },
-  ]);
-  const [blockedList, setBlockedList] = useState({ phones: [], addresses: [] });
-
-  const changeTab = (key) => {
-    setTabSwitches((c) => {
-      const next = c + 1;
-      if (next % 3 === 0) setShowAd(true);
-      return next;
-    });
-    setScreen(key);
-  };
-
-  const handleLogin = (phone) => {
-    let existing = users.find((u) => u.phone === phone);
-    if (!existing) {
-      existing = { id: genId("u"), name: "Naya User", phone, isBlocked: false, points: 50, streak: 0, lastCheckIn: null, referralCode: genId("REF").toUpperCase(), myShopIds: [] };
-      setUsers((u) => [...u, existing]);
-    }
-    setUser({ ...CURRENT_USER_SEED, ...existing });
-    setShowAd(true);
-  };
-
-  const handleAdminLogin = () => { setIsAdmin(true); setShowAd(false); };
-
-  const blockCheck = (phone, address) => blockedList.phones.includes(phone) || blockedList.addresses.includes(address);
-
-  const myShops = user ? shops.filter((s) => user.myShopIds?.includes(s.id)) : [];
-
-  if (activeDataLicense) {
-    return <DataPortal license={activeDataLicense} salesLog={salesLog} onBack={() => setActiveDataLicense(null)} />;
-  }
-
-  if (!user && !isAdmin) {
-    return (
-      <LoginScreen
-        onLogin={handleLogin} onAdminLogin={handleAdminLogin} blockedPhones={blockedList.phones}
-        dataLicenses={dataLicenses} onViewData={(lic) => setActiveDataLicense(lic)}
-      />
-    );
-  }
-
-  if (isAdmin) {
-    return (
-      <div className="max-w-md mx-auto bg-gray-50 min-h-screen font-sans">
-        <AdminPanel
-          shops={shops} users={users} bids={bids} salesLog={salesLog} dataLicenses={dataLicenses} blockedList={blockedList}
-          onBlockShop={(id) => {
-            const s = shops.find((x) => x.id === id);
-            setShops((prev) => prev.map((x) => (x.id === id ? { ...x, isBlocked: true } : x)));
-            setBlockedList((b) => ({ phones: [...new Set([...b.phones, s.phone])], addresses: [...new Set([...b.addresses, s.address])] }));
-          }}
-          onUnblockShop={(id) => {
-            const s = shops.find((x) => x.id === id);
-            setShops((prev) => prev.map((x) => (x.id === id ? { ...x, isBlocked: false } : x)));
-            setBlockedList((b) => ({ phones: b.phones.filter((p) => p !== s.phone), addresses: b.addresses.filter((a) => a !== s.address) }));
-          }}
-          onBlockUser={(id) => {
-            const u = users.find((x) => x.id === id);
-            setUsers((prev) => prev.map((x) => (x.id === id ? { ...x, isBlocked: true } : x)));
-            setBlockedList((b) => ({ ...b, phones: [...new Set([...b.phones, u.phone])] }));
-          }}
-          onUnblockUser={(id) => {
-            const u = users.find((x) => x.id === id);
-            setUsers((prev) => prev.map((x) => (x.id === id ? { ...x, isBlocked: false } : x)));
-            setBlockedList((b) => ({ ...b, phones: b.phones.filter((p) => p !== u.phone) }));
-          }}
-          onGenerateLicense={(scope) => {
-            const code = `SN-${genId("").toUpperCase()}`;
-            setDataLicenses((prev) => [{ id: genId("lic"), code, ...scope, revoked: false, createdAt: Date.now() }, ...prev]);
-          }}
-          onRevokeLicense={(id) => setDataLicenses((prev) => prev.map((l) => (l.id === id ? { ...l, revoked: !l.revoked } : l)))}
-          onLogout={() => setIsAdmin(false)}
-        />
-      </div>
-    );
-  }
-
-  const tabs = [
-    { key: "discover", label: "Discover", icon: Search },
-    { key: "deals", label: "Deals", icon: Flame },
-    { key: "feed", label: "Feed", icon: Megaphone },
-    { key: "bid", label: "Bid", icon: Gavel },
-    { key: "profile", label: "Profile", icon: User },
-  ];
-
-  return (
-    <div className="max-w-md mx-auto bg-gray-50 min-h-screen font-sans relative">
-      {showAd && <InterstitialAd onClose={() => setShowAd(false)} />}
-
-      {screen === "discover" && (
-        <DiscoverTab
-          shops={shops} user={user} location={location} userCoords={userCoords}
-          onLocate={() => {
-            if (navigator.geolocation) {
-              navigator.geolocation.getCurrentPosition(
-                (pos) => { setUserCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }); setLocation("Current Location (GPS)"); },
-                () => setLocation("Location permission denied")
-              );
-            } else {
-              setLocation("GPS not available on this device");
-            }
-          }}
-          onOpenShop={(s) => { setActiveShop(s); setScreen("shopDetail"); }}
-          onAddShop={() => setScreen("addShop")}
-          onOpenMyShop={() => setScreen("myShop")}
-          onPriceCheck={(name, price) => { setPriceCheckSeed({ name, price }); setScreen("priceCheck"); }}
-        />
-      )}
-
-      {screen === "priceCheck" && (
-        <PriceCheckScreen
-          shops={shops} userCoords={userCoords}
-          initialProductName={priceCheckSeed.name} initialPrice={priceCheckSeed.price}
-          onBack={() => setScreen("discover")}
-          onOpenShop={(s) => { setActiveShop(s); setScreen("shopDetail"); }}
-        />
-      )}
-
-      {screen === "shopDetail" && activeShop && (
-        <ShopDetail
-          shop={shops.find((s) => s.id === activeShop.id)}
-          currentUserName={user.name}
-          onBack={() => setScreen("discover")}
-          onAddReview={(shopId, review) => setShops((prev) => prev.map((s) => (s.id === shopId ? { ...s, reviews: [review, ...s.reviews] } : s)))}
-          onClaimShop={(shopId) => {
-            setShops((prev) => prev.map((s) => (s.id === shopId ? { ...s, isClaimed: true, owner: user.id } : s)));
-            setUser((u) => ({ ...u, myShopIds: [...(u.myShopIds || []), shopId] }));
-            alert("Shop claim ho gayi! Ab aap My Shop se products, stock aur billing manage kar sakte hain.");
-            setScreen("myShop");
-          }}
-        />
-      )}
-
-      {screen === "deals" && (
-        <DealsTab
-          shops={shops}
-          onStartFlashDeal={(plan, amount) => {
-            if (myShops.length === 0) { alert("Pehle apni shop add kariye"); return; }
-            const expiresAt = Date.now() + (plan === "2hr" ? 1000 * 60 * 120 : 1000 * 60 * 60 * 24 * 30);
-            setShops((prev) => prev.map((s) => (s.id === myShops[0].id ? { ...s, flashDeal: { plan, expiresAt, item: s.products[0]?.name || "Special item", discount: "10% off" } } : s)));
-            alert(`₹${amount} paid (mock). Flash deal live!`);
-          }}
-        />
-      )}
-
-      {screen === "feed" && (
-        <FeedTab
-          posts={feed}
-          onLike={(id) => setFeed((prev) => prev.map((p) => (p.id === id ? { ...p, likes: p.likes + 1 } : p)))}
-          onCreatePost={(text) => setFeed((prev) => [{ id: genId("f"), shopName: myShops[0]?.name || user.name, text, likes: 0, time: Date.now() }, ...prev])}
-        />
-      )}
-
-      {screen === "bid" && (
-        <BidTab
-          bids={bids} ownerShops={myShops.map((s) => s.id)}
-          onCreateBid={(item, budget) => setBids((prev) => [{ id: genId("b"), customer: user.name, item, budget, area: AREAS[0], status: "open", createdAt: Date.now(), offers: [] }, ...prev])}
-          onOwnerOffer={(bidId, shopId, price) => {
-            const shop = shops.find((s) => s.id === shopId);
-            setBids((prev) => prev.map((b) => (b.id === bidId ? { ...b, offers: [...b.offers, { shopId, shopName: shop.name, price, message: "Available now" }] } : b)));
-          }}
-        />
-      )}
-
-      {screen === "profile" && (
-        <ProfileTab
-          user={user}
-          onCheckIn={() => setUser((u) => ({ ...u, points: u.points + 10, streak: u.streak + 1, lastCheckIn: Date.now() }))}
-          onOpenLeaderboard={() => setScreen("leaderboard")}
-          onOpenAddShop={() => setScreen("addShop")}
-          onOpenMyShop={() => setScreen("myShop")}
-          onLogout={() => { setUser(null); setScreen("discover"); }}
-        />
-      )}
-
-      {screen === "leaderboard" && <LeaderboardScreen currentUser={user} onBack={() => setScreen("profile")} />}
-
-      {screen === "addShop" && (
-        <AddShopForm
-          blockCheck={blockCheck}
-          onBack={() => setScreen("discover")}
-          onSubmit={(form) => {
-            const newShop = {
-              id: genId("s"), name: form.name, owner: user.id, category: form.category, area: form.area,
-              address: form.address, phone: form.phone, lat: 21.17 + Math.random() * 0.05, lng: 72.83 + Math.random() * 0.05,
-              rating: 5.0, isBlocked: false, premiumReviews: false, products: [], reviews: [], flashDeal: null,
-            };
-            setShops((prev) => [newShop, ...prev]);
-            setUser((u) => ({ ...u, myShopIds: [...(u.myShopIds || []), newShop.id] }));
-            setScreen("myShop");
-          }}
-        />
-      )}
-
-      {screen === "myShop" && (
-        <MyShopDashboard
-          shops={myShops}
-          onBack={() => setScreen("profile")}
-          onOpenSell={(shopId) => { setSellShopId(shopId); setScreen("sell"); }}
-          onUpdatePrice={(shopId, productId, price) => setShops((prev) => prev.map((s) => (s.id !== shopId ? s : {
-            ...s,
-            products: s.products.map((p) => (p.id !== productId ? p : { ...p, price, history: [...p.history, { date: "Today", price }], lastUpdated: Date.now() })),
-          })))}
-          onAddProduct={(shopId, name, price, unit, stock) => setShops((prev) => prev.map((s) => (s.id !== shopId ? s : {
-            ...s, products: [...s.products, { id: genId("p"), name, price, unit, stock, history: [{ date: "Today", price }], lastUpdated: Date.now() }],
-          })))}
-        />
-      )}
-
-      {screen === "sell" && sellShopId && (
-        <SellFlow
-          shop={shops.find((s) => s.id === sellShopId)}
-          onBack={() => setScreen("myShop")}
-          onCompleteSale={(shopId, cartItems) => {
-            const shop = shops.find((s) => s.id === shopId);
-            setShops((prev) => prev.map((s) => {
-              if (s.id !== shopId) return s;
-              return {
-                ...s,
-                products: s.products.map((p) => {
-                  const item = cartItems.find((c) => c.productId === p.id);
-                  if (!item) return p;
-                  const soldQty = item.unit === "piece" ? item.qty : item.baseQty;
-                  return { ...p, stock: +(p.stock - soldQty).toFixed(3), lastUpdated: Date.now() };
-                }),
-              };
-            }));
-            const newLogs = cartItems.map((item) => ({
-              id: genId("sl"), shopId: shop.id, shopName: shop.name, area: shop.area, city: shop.city, state: shop.state, country: shop.country,
-              category: shop.category, productName: item.name, qty: item.unit === "piece" ? item.qty : +(item.baseQty * 1000).toFixed(0),
-              revenue: item.lineTotal, timestamp: Date.now(),
-            }));
-            setSalesLog((prev) => [...newLogs, ...prev]);
-          }}
-        />
-      )}
-
-      {["discover", "deals", "feed", "bid", "profile"].includes(screen) && (
-        <BottomNav tabs={tabs} active={screen} onChange={changeTab} />
-      )}
-    </div>
-  );
-}
+          <div className="bg-white rounded-2x
