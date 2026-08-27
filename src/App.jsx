@@ -290,6 +290,12 @@ const daysToExpiry = (expiryDate) => {
   if (!expiryDate) return null;
   return Math.ceil((new Date(expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
 };
+// Loose-quantity units: how the owner enters quantity at POS vs. how stock is stored
+const UNIT_META = {
+  weight: { enteredLabel: "grams", enteredShort: "g", divisor: 1000, stockUnit: "kg" },
+  volume: { enteredLabel: "ml", enteredShort: "ml", divisor: 1000, stockUnit: "L" },
+  length: { enteredLabel: "cm", enteredShort: "cm", divisor: 100, stockUnit: "m" },
+};
 const reviewFromRow = (row) => ({ id: row.id, user: row.user_name, rating: row.rating, text: row.text, reply: row.reply });
 const bidFromRow = (row, offers, shopsById) => ({
   id: row.id, customer: row.customer_name, item: row.item, budget: Number(row.budget),
@@ -813,6 +819,10 @@ function ShopDetail({ shop, onBack, onAddReview, currentUserName, onClaimShop })
   const [tab, setTab] = useState("products");
   const [reviewText, setReviewText] = useState("");
   const [reviewRating, setReviewRating] = useState(5);
+  const [productSearch, setProductSearch] = useState("");
+  const [detailProduct, setDetailProduct] = useState(null);
+
+  const filteredProducts = shop.products.filter((p) => p.name.toLowerCase().includes(productSearch.trim().toLowerCase()));
 
   return (
     <div className="pb-24 min-h-screen bg-gray-50">
@@ -850,38 +860,44 @@ function ShopDetail({ shop, onBack, onAddReview, currentUserName, onClaimShop })
       </div>
 
       {tab === "products" && (
-        <div className="px-5 mt-4 space-y-4">
+        <div className="px-5 mt-4 space-y-3">
+          {shop.products.length > 3 && (
+            <div className="flex items-center bg-white rounded-xl px-3 py-2.5 border border-gray-100">
+              <Search size={15} className="text-gray-400" />
+              <input
+                value={productSearch} onChange={(e) => setProductSearch(e.target.value)}
+                placeholder="Is dukaan me product dhundo..." className="flex-1 outline-none px-2 text-sm text-gray-700"
+              />
+            </div>
+          )}
           {shop.products.length === 0 && (
             <div className="text-center text-gray-400 text-sm mt-6">
               {shop.isClaimed === false ? "Abhi tak koi product list nahi hui — owner ke claim karne ke baad hi dikhega." : "Abhi tak koi product add nahi hua."}
             </div>
           )}
-          {shop.products.map((p) => (
-            <div key={p.id} className="bg-white rounded-2xl p-4 border border-gray-100">
-              <div className="flex gap-3 items-start">
+          {shop.products.length > 0 && filteredProducts.length === 0 && (
+            <div className="text-center text-gray-400 text-sm mt-6">"{productSearch}" is dukaan me nahi mila.</div>
+          )}
+          {filteredProducts.map((p) => (
+            <button key={p.id} onClick={() => setDetailProduct(p)} className="w-full text-left bg-white rounded-2xl p-4 border border-gray-100 active:scale-[0.98] transition-transform">
+              <div className="flex gap-3 items-center">
                 {p.imageUrl ? (
-                  <img src={p.imageUrl} alt={p.name} className="w-16 h-16 rounded-xl object-cover flex-shrink-0" />
+                  <img src={p.imageUrl} alt={p.name} className="w-14 h-14 rounded-xl object-cover flex-shrink-0" />
                 ) : (
-                  <div className="w-16 h-16 rounded-xl bg-gray-100 flex items-center justify-center flex-shrink-0 text-gray-300">
-                    <Package size={22} />
+                  <div className="w-14 h-14 rounded-xl bg-gray-100 flex items-center justify-center flex-shrink-0 text-gray-300">
+                    <Package size={20} />
                   </div>
                 )}
-                <div className="flex-1 flex justify-between items-center">
+                <div className="flex-1">
                   <div className="font-semibold text-gray-800 text-sm">{p.name}</div>
-                  <div className="font-bold text-violet-600">{formatINR(p.price)}</div>
+                  <div className="text-[11px] text-gray-400 mt-0.5">
+                    {p.unit === "piece" ? `${p.stock} pcs available` : `${p.stock} ${(UNIT_META[p.unit] || UNIT_META.weight).stockUnit} available`}
+                  </div>
                 </div>
+                <div className="font-bold text-violet-600">{formatINR(p.price)}</div>
+                <ChevronRight size={16} className="text-gray-300" />
               </div>
-              <div className="h-24 mt-2">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={p.history}>
-                    <XAxis dataKey="date" tick={{ fontSize: 9 }} />
-                    <YAxis hide domain={["dataMin - 5", "dataMax + 5"]} />
-                    <Tooltip formatter={(v) => formatINR(v)} />
-                    <Line type="monotone" dataKey="price" stroke="#7C3AED" strokeWidth={2} dot={{ r: 3 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
+            </button>
           ))}
         </div>
       )}
@@ -918,6 +934,61 @@ function ShopDetail({ shop, onBack, onAddReview, currentUserName, onClaimShop })
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {detailProduct && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-end">
+          <div className="w-full max-w-md mx-auto bg-white rounded-t-3xl p-5 max-h-[85vh] overflow-y-auto">
+            <div className="flex justify-between items-start mb-3">
+              <div className="flex gap-3">
+                {detailProduct.imageUrl ? (
+                  <img src={detailProduct.imageUrl} alt={detailProduct.name} className="w-16 h-16 rounded-xl object-cover" />
+                ) : (
+                  <div className="w-16 h-16 rounded-xl bg-gray-100 flex items-center justify-center text-gray-300"><Package size={22} /></div>
+                )}
+                <div>
+                  <div className="font-bold text-gray-900">{detailProduct.name}</div>
+                  <div className="font-extrabold text-violet-600 text-lg">{formatINR(detailProduct.price)}{detailProduct.unit !== "piece" ? `/${(UNIT_META[detailProduct.unit] || UNIT_META.weight).stockUnit}` : ""}</div>
+                </div>
+              </div>
+              <button onClick={() => setDetailProduct(null)}><X size={20} className="text-gray-400" /></button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              <div className="bg-gray-50 rounded-xl p-3">
+                <div className="text-[11px] text-gray-400">Available Stock</div>
+                <div className="font-bold text-sm text-gray-800">{detailProduct.unit === "piece" ? `${detailProduct.stock} pcs` : `${detailProduct.stock} ${(UNIT_META[detailProduct.unit] || UNIT_META.weight).stockUnit}`}</div>
+              </div>
+              <div className="bg-gray-50 rounded-xl p-3">
+                <div className="text-[11px] text-gray-400">Price Update</div>
+                <div className="font-bold text-sm text-gray-800">{timeAgo(detailProduct.lastUpdated)}</div>
+              </div>
+            </div>
+
+            {detailProduct.expiryDate && (
+              <div className="bg-amber-50 rounded-xl p-3 mb-3 text-xs text-amber-700 font-semibold">
+                Expiry: {new Date(detailProduct.expiryDate).toLocaleDateString("en-IN")}
+              </div>
+            )}
+
+            <div className="text-xs text-gray-500 font-medium mb-1">Price History</div>
+            <div className="h-32 mb-2">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={detailProduct.history}>
+                  <XAxis dataKey="date" tick={{ fontSize: 9 }} />
+                  <YAxis hide domain={["dataMin - 5", "dataMax + 5"]} />
+                  <Tooltip formatter={(v) => formatINR(v)} />
+                  <Line type="monotone" dataKey="price" stroke="#7C3AED" strokeWidth={2} dot={{ r: 3 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="flex gap-2 mt-2">
+              <a href={`tel:${shop.phone}`} className="flex-1 flex items-center justify-center gap-1 bg-emerald-50 text-emerald-600 text-xs font-semibold py-2.5 rounded-lg"><Phone size={13} /> Call</a>
+              <a href={`https://wa.me/91${shop.phone}`} className="flex-1 flex items-center justify-center gap-1 bg-green-50 text-green-600 text-xs font-semibold py-2.5 rounded-lg"><MessageCircle size={13} /> WhatsApp</a>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -1393,7 +1464,7 @@ function LeaderboardScreen({ onBack, currentUser }) {
 
 function AddShopForm({ onBack, onSubmit, blockCheck, existingShopCount = 0 }) {
   const isPaid = existingShopCount >= 1;
-  const [form, setForm] = useState({ name: "", category: CATEGORIES[0], area: AREAS[0], address: "", phone: "" });
+  const [form, setForm] = useState({ name: "", category: CATEGORIES[0], area: "", address: "", phone: "" });
   const [coords, setCoords] = useState(null); // { lat, lng } — captured via GPS, sent through on submit
   const [locating, setLocating] = useState(false);
   const [locateMsg, setLocateMsg] = useState("");
@@ -1409,22 +1480,25 @@ function AddShopForm({ onBack, onSubmit, blockCheck, existingShopCount = 0 }) {
         const lat = pos.coords.latitude, lng = pos.coords.longitude;
         setCoords({ lat, lng });
         try {
-          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
+          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&zoom=18&addressdetails=1&lat=${lat}&lon=${lng}`);
           const data = await res.json();
           const auto = data?.display_name || "";
-          setForm((f) => ({ ...f, address: auto }));
-          setLocateMsg("Address bhar diya — gali/dukan number add karke sahi kar lijiye.");
+          const a = data?.address || {};
+          const areaGuess = a.suburb || a.neighbourhood || a.city_district || a.town || a.village || "";
+          setForm((f) => ({ ...f, address: auto, area: areaGuess || f.area }));
+          setLocateMsg("Address bhar diya — gali no./room no./landmark add karke sahi kar lijiye. Agar address adhoora lage, phone ki Location setting me 'High Accuracy' mode on karke dobara try kariye.");
         } catch {
           setLocateMsg("Location mil gayi, lekin address text nahi nikal paya — khud type kar dijiye.");
         }
         setLocating(false);
       },
       () => { setLocateMsg("Location permission nahi mili — address khud type kariye."); setLocating(false); },
+      { enableHighAccuracy: true, timeout: 10000 },
     );
   };
 
   const submit = async () => {
-    if (!form.name || !form.address || form.phone.length !== 10) { setError("Sab fields sahi se bhariye"); return; }
+    if (!form.name || !form.address || !form.area || form.phone.length !== 10) { setError("Sab fields sahi se bhariye"); return; }
     const blocked = blockCheck(form.phone, form.address);
     if (blocked) { setError("Yeh number ya address admin dwara block kiya gaya hai. Naya shop add nahi ho sakta."); return; }
     if (isPaid && !confirm("₹4999 ka payment karke ye dukaan add karein? (Mock payment)")) return;
@@ -1452,9 +1526,6 @@ function AddShopForm({ onBack, onSubmit, blockCheck, existingShopCount = 0 }) {
         <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none bg-white">
           {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
         </select>
-        <select value={form.area} onChange={(e) => setForm({ ...form, area: e.target.value })} className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none bg-white">
-          {AREAS.map((a) => <option key={a}>{a}</option>)}
-        </select>
 
         <button
           type="button" disabled={locating} onClick={useMyLocation}
@@ -1465,10 +1536,18 @@ function AddShopForm({ onBack, onSubmit, blockCheck, existingShopCount = 0 }) {
         {locateMsg && <div className="text-xs text-gray-500">{locateMsg}</div>}
 
         <div>
+          <label className="text-xs text-gray-500 font-medium">Area / Mohalla</label>
+          <input
+            value={form.area} onChange={(e) => setForm({ ...form, area: e.target.value })}
+            placeholder="e.g. Rasulabad, Bhatar Road" className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none bg-white mt-1"
+          />
+        </div>
+
+        <div>
           <label className="text-xs text-gray-500 font-medium">Poora address</label>
           <textarea
             value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })}
-            placeholder="Gali no., dukan no., landmark — sab yaha add/edit kar sakte hain"
+            placeholder="Gali no., room/dukan no., landmark — sab yaha add/edit kar sakte hain"
             rows={2} className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none bg-white mt-1"
           />
         </div>
@@ -1529,8 +1608,8 @@ function MyShopDashboard({ shops, onBack, onUpdatePrice, onAddProduct, onOpenSel
   const [uploadingProduct, setUploadingProduct] = useState(false);
   const [showScan, setShowScan] = useState(false);
 
-  const unitLabel = (u) => (u === "weight" ? "/kg" : u === "volume" ? "/litre" : "/piece");
-  const stockLabel = (p) => (p.unit === "weight" ? `${p.stock} kg` : p.unit === "volume" ? `${p.stock} L` : `${p.stock} pcs`);
+  const unitLabel = (u) => (u === "weight" ? "/kg" : u === "volume" ? "/litre" : u === "length" ? "/metre" : "/piece");
+  const stockLabel = (p) => (p.unit === "weight" ? `${p.stock} kg` : p.unit === "volume" ? `${p.stock} L` : p.unit === "length" ? `${p.stock} m` : `${p.stock} pcs`);
 
   const handleImagePick = (e) => {
     const file = e.target.files?.[0];
@@ -1676,12 +1755,13 @@ function MyShopDashboard({ shops, onBack, onUpdatePrice, onAddProduct, onOpenSel
               <option value="piece">Piece-wise (e.g. tube, packet)</option>
               <option value="weight">Loose weight (₹ per kg)</option>
               <option value="volume">Loose liquid (₹ per litre)</option>
+              <option value="length">Loose length (₹ per metre — kapda, ribbon, wire)</option>
             </select>
             <input value={newProd.price} onChange={(e) => setNewProd({ ...newProd, price: e.target.value.replace(/\D/g, "") })} placeholder={`Price ₹ ${unitLabel(newProd.unit)}`} className="border border-gray-200 rounded-xl px-3 py-2 text-sm" />
           </div>
           <input
             value={newProd.stock} onChange={(e) => setNewProd({ ...newProd, stock: e.target.value.replace(/[^0-9.]/g, "") })}
-            placeholder={newProd.unit === "piece" ? "Starting stock (pcs)" : newProd.unit === "weight" ? "Starting stock (kg)" : "Starting stock (litre)"}
+            placeholder={newProd.unit === "piece" ? "Starting stock (pcs)" : newProd.unit === "weight" ? "Starting stock (kg)" : newProd.unit === "length" ? "Starting stock (metre)" : "Starting stock (litre)"}
             className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm mb-2"
           />
           <div>
@@ -1732,1128 +1812,4 @@ function ShopReportScreen({ shop, salesLog, onBack, onQuickDiscount }) {
     return now - 1000 * 60 * 60 * 24 * 30;
   }, [period]);
 
-  const shopLogs = salesLog.filter((l) => l.shopId === shop.id && l.timestamp >= cutoff);
-  const totalRevenue = shopLogs.reduce((a, l) => a + l.revenue, 0);
-  const totalUnits = shopLogs.reduce((a, l) => a + l.qty, 0);
-
-  const productStats = shop.products.map((p) => {
-    const sold = shopLogs.filter((l) => l.productName === p.name).reduce((a, l) => a + l.qty, 0);
-    const pipeline = sold + (p.stock || 0);
-    const soldPct = pipeline > 0 ? Math.round((sold / pipeline) * 100) : 0;
-    return { ...p, sold, soldPct };
-  }).sort((a, b) => b.sold - a.sold);
-
-  const slowMovers = productStats.filter((p) => p.stock > 2 && p.soldPct < 20);
-  const expiringSoon = shop.products
-    .map((p) => ({ ...p, daysLeft: daysToExpiry(p.expiryDate) }))
-    .filter((p) => p.daysLeft !== null && p.daysLeft <= 7)
-    .sort((a, b) => a.daysLeft - b.daysLeft);
-
-  return (
-    <div className="pb-24 min-h-screen bg-gray-50">
-      <div className="bg-gradient-to-br from-violet-600 to-indigo-700 px-5 pt-6 pb-6 rounded-b-3xl text-white">
-        <button onClick={onBack} className="mb-3"><ArrowLeft size={20} /></button>
-        <div className="text-2xl font-extrabold flex items-center gap-2"><BarChart3 size={22} /> Shop Report</div>
-        <div className="text-white/80 text-sm mt-1">{shop.name}</div>
-      </div>
-
-      <div className="px-5 mt-4 flex gap-2">
-        {[{ k: "today", l: "Aaj" }, { k: "week", l: "Is Hafte" }, { k: "month", l: "Is Mahine" }].map((p) => (
-          <button
-            key={p.k} onClick={() => setPeriod(p.k)}
-            className={`px-4 py-2 rounded-full text-xs font-semibold ${period === p.k ? "bg-violet-600 text-white" : "bg-white text-gray-500 border border-gray-200"}`}
-          >
-            {p.l}
-          </button>
-        ))}
-      </div>
-
-      <div className="px-5 mt-4 grid grid-cols-2 gap-3">
-        <div className="bg-white rounded-2xl p-4 border border-gray-100 text-center">
-          <div className="text-2xl font-extrabold text-violet-600">{formatINR(totalRevenue)}</div>
-          <div className="text-xs text-gray-400">Total Revenue</div>
-        </div>
-        <div className="bg-white rounded-2xl p-4 border border-gray-100 text-center">
-          <div className="text-2xl font-extrabold text-emerald-600">{totalUnits}</div>
-          <div className="text-xs text-gray-400">Units Sold</div>
-        </div>
-      </div>
-
-      {expiringSoon.length > 0 && (
-        <div className="px-5 mt-4">
-          <div className="bg-red-50 border border-red-200 rounded-2xl p-4">
-            <div className="font-bold text-sm text-red-800 flex items-center gap-2"><Clock size={16} /> Expiring Soon</div>
-            <div className="text-xs text-red-700 mt-1 mb-3">In products ki expiry nazdeek hai (ya ho chuki hai) — jaldi bech dena behtar hoga.</div>
-            <div className="space-y-2">
-              {expiringSoon.map((p) => (
-                <div key={p.id} className="bg-white rounded-xl p-3 flex items-center justify-between">
-                  <div>
-                    <div className="text-sm font-semibold text-gray-800">{p.name}</div>
-                    <div className="text-[11px] text-gray-400">
-                      {p.daysLeft < 0 ? `Expire ho chuka hai` : p.daysLeft === 0 ? "Aaj expire ho raha hai" : `${p.daysLeft} din baaki`} · Stock: {p.stock}
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => onQuickDiscount(shop.id, p.name)}
-                    className="bg-red-500 text-white text-xs font-semibold px-3 py-2 rounded-lg whitespace-nowrap"
-                  >
-                    Discount lagao
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {slowMovers.length > 0 && (
-        <div className="px-5 mt-4">
-          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
-            <div className="font-bold text-sm text-amber-800 flex items-center gap-2"><Flame size={16} /> Slow-moving Products</div>
-            <div className="text-xs text-amber-700 mt-1 mb-3">In products ki bikri kam hai stock ke comparison me — discount lagakar tezi se bech sakte hain.</div>
-            <div className="space-y-2">
-              {slowMovers.map((p) => (
-                <div key={p.id} className="bg-white rounded-xl p-3 flex items-center justify-between">
-                  <div>
-                    <div className="text-sm font-semibold text-gray-800">{p.name}</div>
-                    <div className="text-[11px] text-gray-400">Sirf {p.soldPct}% bika · Stock: {p.stock}</div>
-                  </div>
-                  <button
-                    onClick={() => onQuickDiscount(shop.id, p.name)}
-                    className="bg-amber-500 text-white text-xs font-semibold px-3 py-2 rounded-lg whitespace-nowrap"
-                  >
-                    Discount lagao
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="px-5 mt-4">
-        <div className="bg-white rounded-2xl p-4 border border-gray-100">
-          <div className="font-bold text-sm mb-3">Product-wise Report</div>
-          {productStats.length === 0 && <div className="text-center text-gray-400 text-sm py-4">Abhi tak koi product nahi hai.</div>}
-          <div className="divide-y divide-gray-50">
-            {productStats.map((p) => (
-              <div key={p.id} className="py-2.5">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm font-medium text-gray-700">{p.name}</span>
-                  <span className="text-sm font-bold text-violet-600">{p.sold} sold</span>
-                </div>
-                <div className="w-full bg-gray-100 rounded-full h-1.5 mt-1.5">
-                  <div className="bg-emerald-500 h-1.5 rounded-full" style={{ width: `${Math.min(p.soldPct, 100)}%` }} />
-                </div>
-                <div className="text-[11px] text-gray-400 mt-1">{p.soldPct}% sold · Stock bacha: {p.stock}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ============================================================================
-   FILE: screens/SellFlow.jsx  (POS: scan items, auto-bill, live stock update)
-============================================================================ */
-
-function SellFlow({ shop, onBack, onCompleteSale }) {
-  const [cart, setCart] = useState([]);
-  const [showScan, setShowScan] = useState(false);
-  const [showPicker, setShowPicker] = useState(false);
-  const [pickerQuery, setPickerQuery] = useState("");
-  const [pendingProduct, setPendingProduct] = useState(null);
-  const [qtyInput, setQtyInput] = useState("");
-  const [receipt, setReceipt] = useState(null);
-
-  const inStock = shop.products.filter((p) => (p.stock ?? 0) > 0);
-
-  const addPieceToCart = (product) => {
-    setCart((prev) => {
-      const already = prev.find((c) => c.productId === product.id);
-      const currentQty = already ? already.qty : 0;
-      if (currentQty + 1 > product.stock) { alert(`${product.name} ka stock sirf ${product.stock} pcs bacha hai.`); return prev; }
-      if (already) {
-        return prev.map((c) => (c.productId === product.id ? { ...c, qty: c.qty + 1, displayQty: `${c.qty + 1} pcs`, lineTotal: (c.qty + 1) * product.price } : c));
-      }
-      return [...prev, { productId: product.id, name: product.name, unit: "piece", price: product.price, qty: 1, displayQty: "1 pcs", lineTotal: product.price }];
-    });
-  };
-
-  const confirmWeightQty = () => {
-    const amount = Number(qtyInput);
-    if (!amount || amount <= 0) return;
-    const isVolume = pendingProduct.unit === "volume";
-    const enteredIn = isVolume ? "ml" : "g";
-    const baseQty = amount / 1000;
-    const existing = cart.find((c) => c.productId === pendingProduct.id);
-    const totalBaseQty = (existing ? existing.baseQty : 0) + baseQty;
-    if (totalBaseQty > pendingProduct.stock) {
-      alert(`${pendingProduct.name} ka stock sirf ${pendingProduct.stock} ${isVolume ? "L" : "kg"} bacha hai.`);
-      return;
-    }
-    const lineTotal = +(totalBaseQty * pendingProduct.price).toFixed(2);
-    const displayQty = `${(totalBaseQty * 1000).toFixed(0)} ${enteredIn}`;
-    setCart((prev) => {
-      const already = prev.find((c) => c.productId === pendingProduct.id);
-      if (already) return prev.map((c) => (c.productId === pendingProduct.id ? { ...c, baseQty: totalBaseQty, displayQty, lineTotal } : c));
-      return [...prev, { productId: pendingProduct.id, name: pendingProduct.name, unit: pendingProduct.unit, price: pendingProduct.price, baseQty: totalBaseQty, displayQty, lineTotal }];
-    });
-    setPendingProduct(null);
-    setQtyInput("");
-  };
-
-  const removeFromCart = (productId) => setCart((prev) => prev.filter((c) => c.productId !== productId));
-
-  const total = cart.reduce((sum, c) => sum + c.lineTotal, 0);
-
-  const pickProduct = (product) => {
-    if (product.unit === "piece") addPieceToCart(product);
-    else setPendingProduct(product);
-  };
-
-  const simulateScan = () => {
-    if (inStock.length === 0) { setShowScan(false); alert("Is shop me stock khatam ho gaya hai."); return; }
-    const product = inStock[Math.floor(Math.random() * inStock.length)];
-    setShowScan(false);
-    pickProduct(product);
-  };
-
-  const [finishing, setFinishing] = useState(false);
-  const finishSale = async () => {
-    if (cart.length === 0) return;
-    setFinishing(true);
-    const bill = { id: genId("bill"), shopName: shop.name, items: cart, total, timestamp: Date.now() };
-    await onCompleteSale(shop.id, cart);
-    setFinishing(false);
-    setReceipt(bill);
-  };
-
-  if (receipt) {
-    return (
-      <div className="min-h-screen bg-gray-50 pb-10">
-        <div className="bg-gradient-to-br from-emerald-500 to-teal-600 px-5 pt-6 pb-6 rounded-b-3xl text-white text-center">
-          <Check size={32} className="mx-auto mb-1" />
-          <div className="text-xl font-extrabold">Sale Complete</div>
-          <div className="text-white/80 text-xs mt-1">Stock apne aap update ho gaya</div>
-        </div>
-        <div className="px-5 mt-4">
-          <div className="bg-white rounded-2xl p-5 border border-gray-100">
-            <div className="flex items-center gap-2 mb-1"><Receipt size={16} className="text-gray-500" /><span className="font-bold text-sm">{receipt.shopName}</span></div>
-            <div className="text-[11px] text-gray-400 mb-3">{new Date(receipt.timestamp).toLocaleString()}</div>
-            <div className="divide-y divide-dashed divide-gray-200">
-              {receipt.items.map((it) => (
-                <div key={it.productId} className="flex justify-between py-2 text-sm">
-                  <span className="text-gray-600">{it.name} <span className="text-gray-400 text-xs">× {it.displayQty}</span></span>
-                  <span className="font-semibold">{formatINR(it.lineTotal)}</span>
-                </div>
-              ))}
-            </div>
-            <div className="flex justify-between pt-3 mt-1 border-t border-gray-200 font-extrabold text-violet-600">
-              <span>Total</span><span>{formatINR(total)}</span>
-            </div>
-          </div>
-          <div className="flex gap-2 mt-4">
-            <button onClick={() => window.print()} className="flex-1 flex items-center justify-center gap-1 bg-gray-100 text-gray-700 font-semibold py-3 rounded-xl text-sm"><Printer size={15} /> Print Bill</button>
-            <button onClick={onBack} className="flex-1 bg-violet-600 text-white font-semibold py-3 rounded-xl text-sm">Done</button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="min-h-screen bg-gray-50 pb-32">
-      <div className="bg-gradient-to-br from-emerald-500 to-teal-600 px-5 pt-6 pb-6 rounded-b-3xl text-white">
-        <button onClick={onBack} className="mb-3"><ArrowLeft size={20} /></button>
-        <div className="text-2xl font-extrabold flex items-center gap-2"><ShoppingCart size={22} /> New Sale</div>
-        <div className="text-white/80 text-sm mt-1">{shop.name}</div>
-      </div>
-
-      <div className="px-5 mt-4 space-y-2">
-        <button onClick={() => setShowScan(true)} className="w-full bg-violet-600 text-white font-semibold py-4 rounded-2xl flex items-center justify-center gap-2 shadow-lg">
-          <ScanLine size={20} /> Scan Barcode
-        </button>
-        <button onClick={() => setShowPicker(true)} className="w-full bg-white border-2 border-dashed border-gray-200 text-gray-600 font-semibold py-3.5 rounded-2xl flex items-center justify-center gap-2">
-          <Package size={18} /> Barcode nahi hai? List se chuno
-        </button>
-      </div>
-
-      <div className="px-5 mt-4 space-y-2">
-        {cart.length === 0 && <div className="text-center text-gray-400 text-sm mt-8">Cart khali hai. Scan kariye ya list se product chuniye.</div>}
-        {cart.map((c) => (
-          <div key={c.productId} className="bg-white rounded-2xl p-3 border border-gray-100 flex items-center justify-between">
-            <div>
-              <div className="font-semibold text-sm text-gray-800">{c.name}</div>
-              <div className="text-xs text-gray-400">{c.displayQty} · {formatINR(c.price)}{c.unit === "piece" ? "/pc" : c.unit === "weight" ? "/kg" : "/L"}</div>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="font-bold text-violet-600 text-sm">{formatINR(c.lineTotal)}</span>
-              <button onClick={() => removeFromCart(c.productId)} className="text-red-400"><Trash2 size={16} /></button>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {cart.length > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-gray-100 p-4">
-          <div className="flex justify-between items-center mb-2 text-sm">
-            <span className="text-gray-500">Total ({cart.length} items)</span>
-            <span className="font-extrabold text-lg text-violet-600">{formatINR(total)}</span>
-          </div>
-          <button disabled={finishing} onClick={finishSale} className="w-full bg-emerald-600 disabled:opacity-50 text-white font-bold py-3.5 rounded-xl flex items-center justify-center gap-2">
-            <Check size={18} /> {finishing ? "Saving..." : "OK — Finish Sale & Generate Bill"}
-          </button>
-        </div>
-      )}
-
-      {showScan && (
-        <BarcodeScanModal subtitle="Bikne wale item ko scan kariye" onClose={() => setShowScan(false)} onDetected={simulateScan} />
-      )}
-
-      {showPicker && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-end">
-          <div className="w-full max-w-md mx-auto bg-white rounded-t-3xl p-5 max-h-[75vh] flex flex-col">
-            <div className="flex justify-between items-center mb-3">
-              <div className="font-bold text-sm">Product chuniye (barcode ke bina)</div>
-              <button onClick={() => { setShowPicker(false); setPickerQuery(""); }}><X size={18} /></button>
-            </div>
-            <input
-              autoFocus value={pickerQuery} onChange={(e) => setPickerQuery(e.target.value)}
-              placeholder="Search product..." className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm mb-3 outline-none"
-            />
-            <div className="overflow-y-auto space-y-2">
-              {inStock.filter((p) => p.name.toLowerCase().includes(pickerQuery.toLowerCase())).map((p) => (
-                <button
-                  key={p.id}
-                  onClick={() => { pickProduct(p); setShowPicker(false); setPickerQuery(""); }}
-                  className="w-full flex items-center justify-between bg-gray-50 rounded-xl p-3 text-left"
-                >
-                  <div>
-                    <div className="text-sm font-semibold text-gray-800">{p.name}</div>
-                    <div className="text-[11px] text-gray-400">Stock: {p.unit === "weight" ? `${p.stock} kg` : p.unit === "volume" ? `${p.stock} L` : `${p.stock} pcs`}</div>
-                  </div>
-                  <div className="text-sm font-bold text-violet-600">{formatINR(p.price)}{p.unit === "weight" ? "/kg" : p.unit === "volume" ? "/L" : ""}</div>
-                </button>
-              ))}
-              {inStock.filter((p) => p.name.toLowerCase().includes(pickerQuery.toLowerCase())).length === 0 && (
-                <div className="text-center text-gray-400 text-sm py-6">Koi product nahi mila</div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {pendingProduct && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-end">
-          <div className="w-full max-w-md mx-auto bg-white rounded-t-3xl p-5">
-            <div className="font-bold text-sm mb-1">{pendingProduct.name}</div>
-            <div className="text-xs text-gray-400 mb-3">
-              Price: {formatINR(pendingProduct.price)} / {pendingProduct.unit === "volume" ? "litre" : "kg"} · Available: {pendingProduct.stock} {pendingProduct.unit === "volume" ? "L" : "kg"}
-            </div>
-            <label className="text-xs text-gray-500">Customer ne kitna liya? ({pendingProduct.unit === "volume" ? "ml" : "grams"} me)</label>
-            <input
-              autoFocus value={qtyInput} onChange={(e) => setQtyInput(e.target.value.replace(/\D/g, ""))}
-              placeholder={pendingProduct.unit === "volume" ? "e.g. 250" : "e.g. 50"}
-              className="w-full border border-gray-200 rounded-xl px-4 py-3 text-lg mt-1 mb-2 outline-none"
-            />
-            {qtyInput && (
-              <div className="text-xs text-emerald-600 font-semibold mb-3">
-                Bill amount: {formatINR(+((Number(qtyInput) / 1000) * pendingProduct.price).toFixed(2))}
-              </div>
-            )}
-            <div className="flex gap-2">
-              <button onClick={() => { setPendingProduct(null); setQtyInput(""); }} className="flex-1 bg-gray-100 text-gray-600 font-semibold py-3 rounded-xl">Cancel</button>
-              <button onClick={confirmWeightQty} className="flex-1 bg-violet-600 text-white font-semibold py-3 rounded-xl">Add to Cart</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ============================================================================
-   FILE: screens/AdminPanel.jsx
-============================================================================ */
-
-const PIE_COLORS = ["#7C3AED", "#F97316", "#10B981", "#3B82F6", "#EC4899", "#F59E0B"];
-
-function AdminPanel({ shops, users, bids, salesLog, dataLicenses, blockedList, onBlockShop, onUnblockShop, onBlockUser, onUnblockUser, onGenerateLicense, onRevokeLicense, onLogout }) {
-  const [tab, setTab] = useState("overview");
-
-  const areaDemand = useMemo(() => {
-    const counts = {};
-    bids.forEach((b) => { counts[b.area] = (counts[b.area] || 0) + 1; });
-    shops.forEach((s) => { counts[s.area] = (counts[s.area] || 0) + 0.3; });
-    return Object.entries(counts).map(([area, count]) => ({ area, requests: Math.round(count * 10) / 10 }));
-  }, [bids, shops]);
-
-  const categoryDist = useMemo(() => {
-    const counts = {};
-    shops.forEach((s) => { counts[s.category] = (counts[s.category] || 0) + 1; });
-    return Object.entries(counts).map(([name, value]) => ({ name, value }));
-  }, [shops]);
-
-  const topShops = useMemo(() => [...shops].sort((a, b) => b.rating - a.rating).slice(0, 5), [shops]);
-
-  return (
-    <div className="pb-24 min-h-screen bg-gray-50">
-      <div className="bg-gradient-to-br from-violet-600 to-indigo-700 px-5 pt-6 pb-6 rounded-b-3xl text-white flex justify-between items-start">
-        <div>
-          <div className="text-2xl font-extrabold">Admin Panel</div>
-          <div className="text-white/80 text-sm">Platform management</div>
-        </div>
-        <button onClick={onLogout} className="text-xs bg-white/20 px-3 py-1.5 rounded-full">Logout</button>
-      </div>
-
-      <div className="px-5 mt-4 flex gap-2 overflow-x-auto pb-1">
-        {["overview", "shops", "users", "intelligence", "enterprise"].map((t) => (
-          <button key={t} onClick={() => setTab(t)} className={`px-4 py-2 rounded-full text-xs font-semibold capitalize whitespace-nowrap ${tab === t ? "bg-violet-600 text-white" : "bg-white text-gray-500 border border-gray-200"}`}>{t}</button>
-        ))}
-      </div>
-
-      {tab === "overview" && (
-        <div className="px-5 mt-4 grid grid-cols-2 gap-3">
-          <div className="rounded-2xl p-4 bg-gradient-to-br from-violet-500 to-purple-600 text-white"><div className="text-2xl font-extrabold">{shops.length}</div><div className="text-xs opacity-90">Shops</div></div>
-          <div className="rounded-2xl p-4 bg-gradient-to-br from-teal-500 to-cyan-600 text-white"><div className="text-2xl font-extrabold">{shops.reduce((a, s) => a + s.products.length, 0)}</div><div className="text-xs opacity-90">Products</div></div>
-          <div className="rounded-2xl p-4 bg-gradient-to-br from-orange-400 to-red-500 text-white"><div className="text-2xl font-extrabold">{users.length}</div><div className="text-xs opacity-90">Users</div></div>
-          <div className="rounded-2xl p-4 bg-gradient-to-br from-rose-500 to-pink-600 text-white"><div className="text-2xl font-extrabold">{blockedList.phones.length}</div><div className="text-xs opacity-90">Blocked</div></div>
-        </div>
-      )}
-
-      {tab === "shops" && (
-        <div className="px-5 mt-4 space-y-3">
-          {shops.map((s) => (
-            <div key={s.id} className="bg-white rounded-2xl p-4 border border-gray-100">
-              <div className="flex justify-between items-start">
-                <div>
-                  <div className="font-bold text-sm text-gray-900">{s.name}</div>
-                  <div className="text-xs text-gray-400">{s.area} · {s.phone}</div>
-                </div>
-                {s.isBlocked ? (
-                  <span className="text-[10px] font-bold text-red-500 bg-red-50 px-2 py-1 rounded-full">BLOCKED</span>
-                ) : (
-                  <span className="text-[10px] font-bold text-emerald-500 bg-emerald-50 px-2 py-1 rounded-full">LIVE</span>
-                )}
-              </div>
-              <div className="flex gap-2 mt-3">
-                {s.isBlocked ? (
-                  <button onClick={() => onUnblockShop(s.id)} className="flex-1 flex items-center justify-center gap-1 bg-emerald-50 text-emerald-600 text-xs font-semibold py-2 rounded-lg"><Unlock size={13} /> Unblock</button>
-                ) : (
-                  <button onClick={() => onBlockShop(s.id)} className="flex-1 flex items-center justify-center gap-1 bg-red-50 text-red-500 text-xs font-semibold py-2 rounded-lg"><Ban size={13} /> Block (rule violation)</button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {tab === "users" && (
-        <div className="px-5 mt-4 space-y-3">
-          {users.map((u) => (
-            <div key={u.id} className="bg-white rounded-2xl p-4 border border-gray-100">
-              <div className="flex justify-between items-start">
-                <div>
-                  <div className="font-bold text-sm text-gray-900">{u.name}</div>
-                  <div className="text-xs text-gray-400">+91 {u.phone}</div>
-                </div>
-                {u.isBlocked ? (
-                  <span className="text-[10px] font-bold text-red-500 bg-red-50 px-2 py-1 rounded-full">BLOCKED</span>
-                ) : (
-                  <span className="text-[10px] font-bold text-emerald-500 bg-emerald-50 px-2 py-1 rounded-full">ACTIVE</span>
-                )}
-              </div>
-              <div className="text-[11px] text-gray-400 mt-1">Blocking bhi unke phone/address ko block karega — naya account nahi ban payega.</div>
-              <div className="flex gap-2 mt-3">
-                {u.isBlocked ? (
-                  <button onClick={() => onUnblockUser(u.id)} className="flex-1 flex items-center justify-center gap-1 bg-emerald-50 text-emerald-600 text-xs font-semibold py-2 rounded-lg"><Unlock size={13} /> Unblock</button>
-                ) : (
-                  <button onClick={() => onBlockUser(u.id)} className="flex-1 flex items-center justify-center gap-1 bg-red-50 text-red-500 text-xs font-semibold py-2 rounded-lg"><Ban size={13} /> Block user</button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {tab === "intelligence" && (
-        <div className="px-5 mt-4 space-y-4">
-          <div className="bg-white rounded-2xl p-4 border border-gray-100">
-            <div className="font-bold text-sm mb-2 flex items-center gap-2"><BarChart3 size={16} className="text-violet-600" /> Area-wise demand</div>
-            <div className="h-48">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={areaDemand}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="area" tick={{ fontSize: 9 }} />
-                  <YAxis tick={{ fontSize: 9 }} />
-                  <Tooltip />
-                  <Bar dataKey="requests" fill="#7C3AED" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="text-[11px] text-gray-400 mt-1">Kaha kis area me sabse jyada demand/requests aa rahe hain.</div>
-          </div>
-
-          <div className="bg-white rounded-2xl p-4 border border-gray-100">
-            <div className="font-bold text-sm mb-2 flex items-center gap-2"><PieIcon size={16} className="text-violet-600" /> Category-wise shop distribution</div>
-            <div className="h-48">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={categoryDist} dataKey="value" nameKey="name" innerRadius={40} outerRadius={70}>
-                    {categoryDist.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl p-4 border border-gray-100">
-            <div className="font-bold text-sm mb-2 flex items-center gap-2"><Award size={16} className="text-amber-500" /> Top performing shops</div>
-            {topShops.map((s, i) => (
-              <div key={s.id} className="flex justify-between items-center py-1.5 text-sm">
-                <span className="text-gray-600">{i + 1}. {s.name} <span className="text-gray-400 text-xs">({s.area})</span></span>
-                <span className="font-semibold text-amber-500 flex items-center gap-1"><Star size={12} fill="currentColor" /> {s.rating}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      {tab === "enterprise" && (
-        <EnterpriseTab shops={shops} salesLog={salesLog} dataLicenses={dataLicenses} onGenerateLicense={onGenerateLicense} onRevokeLicense={onRevokeLicense} />
-      )}
-    </div>
-  );
-}
-
-function EnterpriseTab({ shops, salesLog, dataLicenses, onGenerateLicense, onRevokeLicense }) {
-  const [level, setLevel] = useState("city");
-  const [category, setCategory] = useState("All");
-
-  const options = useMemo(() => {
-    const uniq = (arr) => [...new Set(arr)];
-    if (level === "shop") return shops.map((s) => ({ value: s.id, label: s.name }));
-    if (level === "area") return uniq(shops.map((s) => s.area)).map((v) => ({ value: v, label: v }));
-    if (level === "city") return uniq(shops.map((s) => s.city)).map((v) => ({ value: v, label: v }));
-    if (level === "state") return uniq(shops.map((s) => s.state)).map((v) => ({ value: v, label: v }));
-    return uniq(shops.map((s) => s.country)).map((v) => ({ value: v, label: v }));
-  }, [level, shops]);
-
-  const [value, setValue] = useState("");
-  useEffect(() => { setValue(options[0]?.value || ""); }, [level, options.length]); // eslint-disable-line
-
-  const scope = { level, value, category, valueLabel: options.find((o) => o.value === value)?.label };
-  const filtered = value ? filterSalesLog(salesLog, scope) : [];
-  const productData = aggregateByProduct(filtered);
-  const totalQty = filtered.reduce((a, l) => a + l.qty, 0);
-  const totalRevenue = filtered.reduce((a, l) => a + l.revenue, 0);
-
-  return (
-    <div className="px-5 mt-4 space-y-4">
-      <div className="bg-white rounded-2xl p-4 border border-gray-100">
-        <div className="font-bold text-sm mb-1 flex items-center gap-2"><IndianRupee size={16} className="text-emerald-600" /> Enterprise Data Access</div>
-        <div className="text-[11px] text-gray-400 mb-3">Manufacturers/distributors ko exact scope ka data bechiye — shop se lekar poore country tak.</div>
-
-        <div className="text-xs text-gray-500 font-medium mb-1">Geography level</div>
-        <div className="flex gap-1.5 mb-3 flex-wrap">
-          {["shop", "area", "city", "state", "country"].map((l) => (
-            <button key={l} onClick={() => setLevel(l)} className={`px-3 py-1.5 rounded-full text-[11px] font-semibold capitalize ${level === l ? "bg-violet-600 text-white" : "bg-gray-100 text-gray-500"}`}>{l}</button>
-          ))}
-        </div>
-
-        <div className="grid grid-cols-2 gap-2 mb-3">
-          <select value={value} onChange={(e) => setValue(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-sm">
-            {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-          <select value={category} onChange={(e) => setCategory(e.target.value)} className="border border-gray-200 rounded-xl px-3 py-2 text-sm">
-            <option value="All">All Categories</option>
-            {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
-          </select>
-        </div>
-
-        <div className="bg-gray-50 rounded-xl p-3 mb-3">
-          <div className="text-[11px] text-gray-400 mb-2">Live preview — {scopeLabel(scope)}</div>
-          {productData.length === 0 ? (
-            <div className="text-center text-gray-400 text-xs py-4">Is scope me abhi koi sales data nahi hai.</div>
-          ) : (
-            <>
-              <div className="h-40">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={productData.slice(0, 6)}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="productName" tick={{ fontSize: 8 }} interval={0} angle={-15} textAnchor="end" height={40} />
-                    <YAxis tick={{ fontSize: 9 }} />
-                    <Tooltip />
-                    <Bar dataKey="qty" fill="#10B981" radius={[6, 6, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="flex justify-between text-xs mt-2 text-gray-500">
-                <span>Total units sold: <b className="text-gray-800">{totalQty}</b></span>
-                <span>Revenue: <b className="text-gray-800">{formatINR(totalRevenue)}</b></span>
-              </div>
-            </>
-          )}
-        </div>
-
-        <button
-          disabled={!value}
-          onClick={() => onGenerateLicense(scope)}
-          className="w-full bg-emerald-600 disabled:opacity-40 text-white font-semibold py-3 rounded-xl text-sm flex items-center justify-center gap-2"
-        >
-          <Send size={15} /> Generate Shareable Data Link
-        </button>
-      </div>
-
-      <div className="bg-white rounded-2xl p-4 border border-gray-100">
-        <div className="font-bold text-sm mb-3">Active Data Licenses</div>
-        {dataLicenses.length === 0 && <div className="text-center text-gray-400 text-xs py-4">Abhi tak koi link generate nahi hua.</div>}
-        <div className="space-y-2">
-          {dataLicenses.map((lic) => (
-            <div key={lic.id} className={`rounded-xl p-3 border ${lic.revoked ? "border-gray-100 bg-gray-50 opacity-60" : "border-emerald-100 bg-emerald-50"}`}>
-              <div className="flex justify-between items-start">
-                <div>
-                  <div className="text-xs font-semibold text-gray-800">{scopeLabel(lic)}</div>
-                  <div className="font-mono text-sm font-bold text-emerald-700 mt-0.5">{lic.code}</div>
-                  <div className="text-[10px] text-gray-400 mt-0.5">Created {timeAgo(lic.createdAt)}</div>
-                </div>
-                <div className="flex flex-col gap-1 items-end">
-                  <button
-                    onClick={() => { navigator.clipboard?.writeText(`shopnear.app/data/${lic.code}`); alert("Link copied: shopnear.app/data/" + lic.code); }}
-                    className="text-[10px] bg-white border border-gray-200 px-2 py-1 rounded-full font-semibold text-gray-600"
-                  >
-                    Copy Link
-                  </button>
-                  <button
-                    onClick={() => onRevokeLicense(lic.id)}
-                    className={`text-[10px] px-2 py-1 rounded-full font-semibold ${lic.revoked ? "bg-emerald-100 text-emerald-600" : "bg-red-100 text-red-500"}`}
-                  >
-                    {lic.revoked ? "Restore" : "Revoke"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ============================================================================
-   FILE: screens/DataPortal.jsx
-============================================================================ */
-
-function DataPortal({ license, salesLog, onBack }) {
-  const filtered = filterSalesLog(salesLog, license);
-  const productData = aggregateByProduct(filtered);
-  const totalQty = filtered.reduce((a, l) => a + l.qty, 0);
-  const totalRevenue = filtered.reduce((a, l) => a + l.revenue, 0);
-  const shopCount = new Set(filtered.map((l) => l.shopId)).size;
-
-  return (
-    <div className="min-h-screen bg-gray-50 pb-10">
-      <div className="bg-gradient-to-br from-emerald-600 to-teal-700 px-5 pt-6 pb-6 rounded-b-3xl text-white">
-        <button onClick={onBack} className="mb-3"><ArrowLeft size={20} /></button>
-        <div className="text-xs bg-white/20 inline-block px-2 py-1 rounded-full mb-2">LICENSED DATA VIEW</div>
-        <div className="text-xl font-extrabold">{scopeLabel(license)}</div>
-        <div className="text-white/80 text-xs mt-1">Code: {license.code}</div>
-      </div>
-
-      <div className="px-5 mt-4 grid grid-cols-3 gap-2">
-        <div className="bg-white rounded-2xl p-3 border border-gray-100 text-center">
-          <div className="text-lg font-extrabold text-emerald-600">{totalQty}</div>
-          <div className="text-[10px] text-gray-400">Units sold</div>
-        </div>
-        <div className="bg-white rounded-2xl p-3 border border-gray-100 text-center">
-          <div className="text-lg font-extrabold text-violet-600">{formatINR(totalRevenue)}</div>
-          <div className="text-[10px] text-gray-400">Revenue</div>
-        </div>
-        <div className="bg-white rounded-2xl p-3 border border-gray-100 text-center">
-          <div className="text-lg font-extrabold text-orange-500">{shopCount}</div>
-          <div className="text-[10px] text-gray-400">Shops</div>
-        </div>
-      </div>
-
-      <div className="px-5 mt-4">
-        <div className="bg-white rounded-2xl p-4 border border-gray-100">
-          <div className="font-bold text-sm mb-2 flex items-center gap-2"><BarChart3 size={16} className="text-emerald-600" /> Product-wise demand</div>
-          {productData.length === 0 ? (
-            <div className="text-center text-gray-400 text-sm py-6">Is scope me abhi data uplabdh nahi hai.</div>
-          ) : (
-            <>
-              <div className="h-52">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={productData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="productName" tick={{ fontSize: 8 }} interval={0} angle={-20} textAnchor="end" height={50} />
-                    <YAxis tick={{ fontSize: 9 }} />
-                    <Tooltip />
-                    <Bar dataKey="qty" fill="#059669" radius={[6, 6, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="mt-3 divide-y divide-gray-50">
-                {productData.map((p) => (
-                  <div key={p.productName} className="flex justify-between py-1.5 text-sm">
-                    <span className="text-gray-600">{p.productName}</span>
-                    <span className="font-semibold text-gray-800">{p.qty} units · {formatINR(p.revenue)}</span>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ============================================================================
-   FILE: App.jsx  (root component — wires everything above together)
-   Now backed by Supabase: shops/products/reviews/bids/offers/feed/sales/
-   licenses/blocked-list/users all live in Postgres. Local React state is
-   just a cache of what's in the DB, refreshed on load and updated after
-   every write.
-============================================================================ */
-
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [screen, setScreen] = useState("discover");
-  const [activeShop, setActiveShop] = useState(null);
-  const [sellShopId, setSellShopId] = useState(null);
-  const [reportShopId, setReportShopId] = useState(null);
-  const [priceCheckSeed, setPriceCheckSeed] = useState({ name: "", price: "" });
-  const [showAd, setShowAd] = useState(false);
-  const [tabSwitches, setTabSwitches] = useState(0);
-  const [location, setLocation] = useState("Surat, Gujarat (default)");
-  const [userCoords, setUserCoords] = useState({ lat: 21.1702, lng: 72.8311 });
-
-  const [shops, setShops] = useState([]);
-  const [bids, setBids] = useState([]);
-  const [feed, setFeed] = useState([]);
-  const [salesLog, setSalesLog] = useState([]);
-  const [dataLicenses, setDataLicenses] = useState([]);
-  const [activeDataLicense, setActiveDataLicense] = useState(null);
-  const [users, setUsers] = useState([]);
-  const [blockedList, setBlockedList] = useState({ phones: [], addresses: [] });
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState("");
-
-  // ---- Initial load: pull everything from Supabase once on mount ----
-  useEffect(() => {
-    async function loadAll() {
-      try {
-        const [
-          { data: shopRows }, { data: productRows }, { data: reviewRows },
-          { data: bidRows }, { data: offerRows }, { data: feedRows },
-          { data: salesRows }, { data: blockedRows }, { data: licenseRows }, { data: userRows },
-        ] = await Promise.all([
-          supabase.from("shops").select("*"),
-          supabase.from("products").select("*"),
-          supabase.from("reviews").select("*"),
-          supabase.from("bids").select("*").order("created_at", { ascending: false }),
-          supabase.from("bid_offers").select("*"),
-          supabase.from("feed_posts").select("*").order("created_at", { ascending: false }),
-          supabase.from("sales_log").select("*").order("created_at", { ascending: false }),
-          supabase.from("blocked_entities").select("*"),
-          supabase.from("data_licenses").select("*").order("created_at", { ascending: false }),
-          supabase.from("users").select("*"),
-        ]);
-
-        const mergedShops = (shopRows || []).map((r) => shopFromRow(r, productRows, reviewRows));
-        const shopsById = Object.fromEntries(mergedShops.map((s) => [s.id, s]));
-
-        setShops(mergedShops);
-        setBids((bidRows || []).map((r) => bidFromRow(r, offerRows, shopsById)));
-        setFeed((feedRows || []).map((r) => ({ id: r.id, shopName: shopsById[r.shop_id]?.name || "Shop", text: r.text, likes: r.likes, time: new Date(r.created_at).getTime() })));
-        setSalesLog((salesRows || []).map((r) => ({
-          id: r.id, shopId: r.shop_id, shopName: shopsById[r.shop_id]?.name || "Shop", area: r.area, city: r.city, state: r.state, country: r.country,
-          category: r.category, productName: r.product_name, qty: Number(r.qty), revenue: Number(r.revenue), timestamp: new Date(r.created_at).getTime(),
-        })));
-        setBlockedList({
-          phones: (blockedRows || []).filter((b) => b.type === "phone").map((b) => b.value),
-          addresses: (blockedRows || []).filter((b) => b.type === "address").map((b) => b.value),
-        });
-        setDataLicenses((licenseRows || []).map((r) => ({ id: r.id, code: r.code, level: r.level, value: r.value, category: r.category, revoked: r.revoked, createdAt: new Date(r.created_at).getTime() })));
-        setUsers((userRows || []).map((r) => ({ id: r.id, name: r.name, phone: r.phone, points: r.points, streak: r.streak, lastCheckIn: r.last_check_in ? new Date(r.last_check_in).getTime() : null, isBlocked: r.is_blocked, referralCode: r.referral_code })));
-      } catch (err) {
-        console.error("Failed to load data from Supabase:", err);
-        setLoadError("Database se data load nahi ho paya. Environment variables check kariye.");
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadAll();
-  }, []);
-
-  const changeTab = (key) => {
-    setTabSwitches((c) => {
-      const next = c + 1;
-      if (next % 3 === 0) setShowAd(true);
-      return next;
-    });
-    setScreen(key);
-  };
-
-  const handleLogin = async (phone) => {
-    try {
-      let existing = users.find((u) => u.phone === phone);
-      if (!existing) {
-        const { data, error } = await supabase
-          .from("users")
-          .insert({ phone, name: "Naya User", referral_code: genId("REF").toUpperCase() })
-          .select()
-          .single();
-        if (error) {
-          if (error.code === "23505") {
-            // User already exists in the DB but our local cache missed it (e.g. loaded
-            // before this account was created elsewhere) — just fetch it instead.
-            const { data: found, error: findErr } = await supabase.from("users").select("*").eq("phone", phone).single();
-            if (findErr || !found) { alert("Login error: " + error.message); return; }
-            existing = { id: found.id, name: found.name, phone: found.phone, points: found.points, streak: found.streak, lastCheckIn: found.last_check_in ? new Date(found.last_check_in).getTime() : null, isBlocked: found.is_blocked, referralCode: found.referral_code };
-          } else {
-            alert("Login error: " + error.message);
-            return;
-          }
-        } else {
-          existing = { id: data.id, name: data.name, phone: data.phone, points: data.points, streak: data.streak, lastCheckIn: null, isBlocked: false, referralCode: data.referral_code };
-        }
-        setUsers((u) => [...u, existing]);
-      }
-      setUser(existing);
-      setShowAd(true);
-    } catch (err) {
-      alert("Login fail hua: " + err.message);
-    }
-  };
-
-  const handleAdminLogin = () => { setIsAdmin(true); setShowAd(false); };
-
-  const blockCheck = (phone, address) => blockedList.phones.includes(phone) || blockedList.addresses.includes(address);
-
-  const myShops = user ? shops.filter((s) => s.owner_id === user.id) : [];
-  const userView = user ? { ...user, myShopIds: myShops.map((s) => s.id) } : null;
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-violet-500 to-purple-600">
-        <div className="text-white text-center">
-          <div className="text-4xl mb-2">🏪</div>
-          <div className="font-semibold">Loading ShopNear...</div>
-          {loadError && <div className="text-red-200 text-sm mt-3 max-w-xs">{loadError}</div>}
-        </div>
-      </div>
-    );
-  }
-
-  if (activeDataLicense) {
-    return <DataPortal license={activeDataLicense} salesLog={salesLog} onBack={() => setActiveDataLicense(null)} />;
-  }
-
-  if (!user && !isAdmin) {
-    return (
-      <LoginScreen
-        onLogin={handleLogin} onAdminLogin={handleAdminLogin} blockedPhones={blockedList.phones}
-        dataLicenses={dataLicenses} onViewData={(lic) => setActiveDataLicense(lic)}
-      />
-    );
-  }
-
-  if (isAdmin) {
-    return (
-      <div className="max-w-md mx-auto bg-gray-50 min-h-screen font-sans">
-        <AdminPanel
-          shops={shops} users={users} bids={bids} salesLog={salesLog} dataLicenses={dataLicenses} blockedList={blockedList}
-          onBlockShop={async (id) => {
-            const s = shops.find((x) => x.id === id);
-            await supabase.from("shops").update({ is_blocked: true }).eq("id", id);
-            await supabase.from("blocked_entities").insert([{ type: "phone", value: s.phone }, { type: "address", value: s.address }]);
-            setShops((prev) => prev.map((x) => (x.id === id ? { ...x, isBlocked: true } : x)));
-            setBlockedList((b) => ({ phones: [...new Set([...b.phones, s.phone])], addresses: [...new Set([...b.addresses, s.address])] }));
-          }}
-          onUnblockShop={async (id) => {
-            const s = shops.find((x) => x.id === id);
-            await supabase.from("shops").update({ is_blocked: false }).eq("id", id);
-            await supabase.from("blocked_entities").delete().in("value", [s.phone, s.address]);
-            setShops((prev) => prev.map((x) => (x.id === id ? { ...x, isBlocked: false } : x)));
-            setBlockedList((b) => ({ phones: b.phones.filter((p) => p !== s.phone), addresses: b.addresses.filter((a) => a !== s.address) }));
-          }}
-          onBlockUser={async (id) => {
-            const u = users.find((x) => x.id === id);
-            await supabase.from("users").update({ is_blocked: true }).eq("id", id);
-            await supabase.from("blocked_entities").insert({ type: "phone", value: u.phone });
-            setUsers((prev) => prev.map((x) => (x.id === id ? { ...x, isBlocked: true } : x)));
-            setBlockedList((b) => ({ ...b, phones: [...new Set([...b.phones, u.phone])] }));
-          }}
-          onUnblockUser={async (id) => {
-            const u = users.find((x) => x.id === id);
-            await supabase.from("users").update({ is_blocked: false }).eq("id", id);
-            await supabase.from("blocked_entities").delete().eq("value", u.phone);
-            setUsers((prev) => prev.map((x) => (x.id === id ? { ...x, isBlocked: false } : x)));
-            setBlockedList((b) => ({ ...b, phones: b.phones.filter((p) => p !== u.phone) }));
-          }}
-          onGenerateLicense={async (scope) => {
-            const code = `SN-${genId("").toUpperCase()}`;
-            const { data } = await supabase.from("data_licenses").insert({ code, level: scope.level, value: scope.value, category: scope.category }).select().single();
-            if (data) setDataLicenses((prev) => [{ id: data.id, code: data.code, level: data.level, value: data.value, category: data.category, revoked: false, createdAt: Date.now() }, ...prev]);
-          }}
-          onRevokeLicense={async (id) => {
-            const lic = dataLicenses.find((l) => l.id === id);
-            await supabase.from("data_licenses").update({ revoked: !lic.revoked }).eq("id", id);
-            setDataLicenses((prev) => prev.map((l) => (l.id === id ? { ...l, revoked: !l.revoked } : l)));
-          }}
-          onLogout={() => setIsAdmin(false)}
-        />
-      </div>
-    );
-  }
-
-  const tabs = [
-    { key: "discover", label: "Discover", icon: Search },
-    { key: "deals", label: "Deals", icon: Flame },
-    { key: "feed", label: "Feed", icon: Megaphone },
-    { key: "bid", label: "Bid", icon: Gavel },
-    { key: "profile", label: "Profile", icon: User },
-  ];
-
-  return (
-    <div className="max-w-md mx-auto bg-gray-50 min-h-screen font-sans relative">
-      {showAd && <InterstitialAd onClose={() => setShowAd(false)} />}
-
-      {screen === "discover" && (
-        <DiscoverTab
-          shops={shops} user={userView} location={location} userCoords={userCoords}
-          onLocate={() => {
-            if (navigator.geolocation) {
-              navigator.geolocation.getCurrentPosition(
-                (pos) => { setUserCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }); setLocation("Current Location (GPS)"); },
-                () => setLocation("Location permission denied")
-              );
-            } else {
-              setLocation("GPS not available on this device");
-            }
-          }}
-          onOpenShop={(s) => { setActiveShop(s); setScreen("shopDetail"); }}
-          onAddShop={() => setScreen("addShop")}
-          onOpenMyShop={() => setScreen("myShop")}
-          onPriceCheck={(name, price) => { setPriceCheckSeed({ name, price }); setScreen("priceCheck"); }}
-        />
-      )}
-
-      {screen === "priceCheck" && (
-        <PriceCheckScreen
-          shops={shops} userCoords={userCoords}
-          initialProductName={priceCheckSeed.name} initialPrice={priceCheckSeed.price}
-          onBack={() => setScreen("discover")}
-          onOpenShop={(s) => { setActiveShop(s); setScreen("shopDetail"); }}
-        />
-      )}
-
-      {screen === "shopDetail" && activeShop && (
-        <ShopDetail
-          shop={shops.find((s) => s.id === activeShop.id)}
-          currentUserName={user.name}
-          onBack={() => setScreen("discover")}
-          onAddReview={async (shopId, review) => {
-            const { data } = await supabase.from("reviews").insert({ shop_id: shopId, user_name: review.user, rating: review.rating, text: review.text }).select().single();
-            const newReview = data ? { id: data.id, user: data.user_name, rating: data.rating, text: data.text, reply: null } : review;
-            setShops((prev) => prev.map((s) => (s.id === shopId ? { ...s, reviews: [newReview, ...s.reviews] } : s)));
-          }}
-          onClaimShop={async (shopId) => {
-            await supabase.from("shops").update({ owner_id: user.id, is_claimed: true }).eq("id", shopId);
-            setShops((prev) => prev.map((s) => (s.id === shopId ? { ...s, isClaimed: true, owner_id: user.id } : s)));
-            alert("Shop claim ho gayi! Ab aap My Shop se products, stock aur billing manage kar sakte hain.");
-            setScreen("myShop");
-          }}
-        />
-      )}
-
-      {screen === "deals" && (
-        <DealsTab
-          shops={shops}
-          myShops={myShops}
-          onStartFlashDeal={async (shopId, hours, amount, details) => {
-            const expiresAt = Date.now() + hours * 60 * 60 * 1000;
-            const flashDeal = { hours, expiresAt, ...details };
-            await supabase.from("shops").update({ flash_deal: flashDeal }).eq("id", shopId);
-            setShops((prev) => prev.map((s) => (s.id === shopId ? { ...s, flashDeal } : s)));
-            alert(`₹${amount} paid (mock). "${details.productName}" pe Flash Deal live!`);
-          }}
-        />
-      )}
-
-      {screen === "feed" && (
-        <FeedTab
-          posts={feed}
-          onLike={async (id) => {
-            const post = feed.find((p) => p.id === id);
-            await supabase.from("feed_posts").update({ likes: post.likes + 1 }).eq("id", id);
-            setFeed((prev) => prev.map((p) => (p.id === id ? { ...p, likes: p.likes + 1 } : p)));
-          }}
-          onCreatePost={async (text) => {
-            const shop = myShops[0];
-            const { data } = await supabase.from("feed_posts").insert({ shop_id: shop?.id || null, text }).select().single();
-            if (data) setFeed((prev) => [{ id: data.id, shopName: shop?.name || user.name, text, likes: 0, time: Date.now() }, ...prev]);
-          }}
-        />
-      )}
-
-      {screen === "bid" && (
-        <BidTab
-          bids={bids} ownerShops={myShops.map((s) => s.id)}
-          onCreateBid={async (item, budget) => {
-            const { data } = await supabase.from("bids").insert({ customer_id: user.id, customer_name: user.name, item, budget, area: AREAS[0] }).select().single();
-            if (data) setBids((prev) => [{ id: data.id, customer: user.name, item, budget, area: AREAS[0], status: "open", createdAt: Date.now(), offers: [] }, ...prev]);
-          }}
-          onOwnerOffer={async (bidId, shopId, price) => {
-            const shop = shops.find((s) => s.id === shopId);
-            await supabase.from("bid_offers").insert({ bid_id: bidId, shop_id: shopId, price, message: "Available now" });
-            setBids((prev) => prev.map((b) => (b.id === bidId ? { ...b, offers: [...b.offers, { shopId, shopName: shop.name, price, message: "Available now" }] } : b)));
-          }}
-        />
-      )}
-
-      {screen === "profile" && (
-        <ProfileTab
-          user={userView}
-          onCheckIn={async () => {
-            const newPoints = user.points + 10, newStreak = user.streak + 1, now = new Date().toISOString();
-            await supabase.from("users").update({ points: newPoints, streak: newStreak, last_check_in: now }).eq("id", user.id);
-            setUser((u) => ({ ...u, points: newPoints, streak: newStreak, lastCheckIn: Date.now() }));
-          }}
-          onOpenLeaderboard={() => setScreen("leaderboard")}
-          onOpenAddShop={() => setScreen("addShop")}
-          onOpenMyShop={() => setScreen("myShop")}
-          onLogout={() => { setUser(null); setScreen("discover"); }}
-        />
-      )}
-
-      {screen === "leaderboard" && <LeaderboardScreen currentUser={user} onBack={() => setScreen("profile")} />}
-
-      {screen === "addShop" && (
-        <AddShopForm
-          blockCheck={blockCheck}
-          existingShopCount={myShops.length}
-          onBack={() => setScreen(myShops.length > 0 ? "myShop" : "discover")}
-          onSubmit={async (form) => {
-            const { data, error } = await supabase.from("shops").insert({
-              owner_id: user.id, name: form.name, category: form.category, area: form.area,
-              address: form.address, phone: form.phone, city: "Surat", state: "Gujarat", country: "India",
-              lat: form.coords?.lat ?? (21.17 + Math.random() * 0.05),
-              lng: form.coords?.lng ?? (72.83 + Math.random() * 0.05),
-              rating: 5.0, is_claimed: true,
-            }).select().single();
-            if (error) { alert("Shop add nahi ho payi: " + error.message); return; }
-            const newShop = shopFromRow(data, [], []);
-            setShops((prev) => [newShop, ...prev]);
-            setScreen("myShop");
-          }}
-        />
-      )}
-
-      {screen === "myShop" && (
-        <MyShopDashboard
-          shops={myShops}
-          onBack={() => setScreen("profile")}
-          onOpenSell={(shopId) => { setSellShopId(shopId); setScreen("sell"); }}
-          onOpenReport={(shopId) => { setReportShopId(shopId); setScreen("myShopReport"); }}
-          onAddAnotherShop={() => setScreen("addShop")}
-          onDeleteShop={async (shopId) => {
-            const { error } = await supabase.from("shops").delete().eq("id", shopId);
-            if (error) { alert("Delete nahi ho paya: " + error.message); return; }
-            setShops((prev) => prev.filter((s) => s.id !== shopId));
-          }}
-          onUpdatePrice={async (shopId, productId, price) => {
-            const shop = shops.find((s) => s.id === shopId);
-            const product = shop.products.find((p) => p.id === productId);
-            const newHistory = [...product.history, { date: "Today", price }];
-            await supabase.from("products").update({ price, history: newHistory, last_updated: new Date().toISOString() }).eq("id", productId);
-            setShops((prev) => prev.map((s) => (s.id !== shopId ? s : {
-              ...s,
-              products: s.products.map((p) => (p.id !== productId ? p : { ...p, price, history: newHistory, lastUpdated: Date.now() })),
-            })));
-          }}
-          onAddProduct={async (shopId, name, price, unit, stock, imageUrl, expiryDate) => {
-            const { data } = await supabase.from("products").insert({ shop_id: shopId, name, price, unit, stock, history: [{ date: "Today", price }], image_url: imageUrl || null, expiry_date: expiryDate || null }).select().single();
-            if (data) setShops((prev) => prev.map((s) => (s.id !== shopId ? s : { ...s, products: [...s.products, productFromRow(data)] })));
-          }}
-        />
-      )}
-
-      {screen === "myShopReport" && reportShopId && (
-        <ShopReportScreen
-          shop={shops.find((s) => s.id === reportShopId)}
-          salesLog={salesLog}
-          onBack={() => setScreen("myShop")}
-          onQuickDiscount={async (shopId, productName) => {
-            const shop = shops.find((s) => s.id === shopId);
-            const product = shop.products.find((p) => p.name === productName);
-            const discountPercent = 15;
-            const originalPrice = product?.price ?? 0;
-            const newPrice = +(originalPrice * (1 - discountPercent / 100)).toFixed(2);
-            const flashDeal = { plan: "2hr", expiresAt: Date.now() + 1000 * 60 * 120, productName, discountPercent, originalPrice, newPrice, bulkOffer: null };
-            await supabase.from("shops").update({ flash_deal: flashDeal }).eq("id", shopId);
-            setShops((prev) => prev.map((s) => (s.id === shopId ? { ...s, flashDeal } : s)));
-            alert(`₹10 paid (mock). "${productName}" pe 15% Flash Deal live ho gaya!`);
-          }}
-        />
-      )}
-
-      {screen === "sell" && sellShopId && (
-        <SellFlow
-          shop={shops.find((s) => s.id === sellShopId)}
-          onBack={() => setScreen("myShop")}
-          onCompleteSale={async (shopId, cartItems) => {
-            const shop = shops.find((s) => s.id === shopId);
-            const nowIso = new Date().toISOString();
-
-            await Promise.all(cartItems.map((item) => {
-              const product = shop.products.find((p) => p.id === item.productId);
-              const soldQty = item.unit === "piece" ? item.qty : item.baseQty;
-              const newStock = +(product.stock - soldQty).toFixed(3);
-              return supabase.from("products").update({ stock: newStock, last_updated: nowIso }).eq("id", item.productId);
-            }));
-
-            const salesRows = cartItems.map((item) => ({
-              shop_id: shop.id, product_name: item.name,
-              qty: item.unit === "piece" ? item.qty : +(item.baseQty * 1000).toFixed(0),
-              revenue: item.lineTotal, area: shop.area, city: shop.city, state: shop.state, country: shop.country, category: shop.category,
-            }));
-            const { data: insertedSales } = await supabase.from("sales_log").insert(salesRows).select();
-
-            setShops((prev) => prev.map((s) => {
-              if (s.id !== shopId) return s;
-              return {
-                ...s,
-                products: s.products.map((p) => {
-                  const item = cartItems.find((c) => c.productId === p.id);
-                  if (!item) return p;
-                  const soldQty = item.unit === "piece" ? item.qty : item.baseQty;
-                  return { ...p, stock: +(p.stock - soldQty).toFixed(3), lastUpdated: Date.now() };
-                }),
-              };
-            }));
-            if (insertedSales) {
-              setSalesLog((prev) => [
-                ...insertedSales.map((r) => ({
-                  id: r.id, shopId: r.shop_id, shopName: shop.name, area: r.area, city: r.city, state: r.state, country: r.country,
-                  category: r.category, productName: r.product_name, qty: Number(r.qty), revenue: Number(r.revenue), timestamp: Date.now(),
-                })),
-                ...prev,
-              ]);
-            }
-          }}
-        />
-      )}
-
-      {["discover", "deals", "feed", "bid", "profile"].includes(screen) && (
-        <BottomNav tabs={tabs} active={screen} onChange={changeTab} />
-      )}
-    </div>
-  );
-}
+  const 
