@@ -92,7 +92,7 @@ create table if not exists public.search_events (
 );
 create index if not exists search_events_created_idx on public.search_events(created_at desc);
 create index if not exists search_events_query_idx on public.search_events(query);
-
+u
 create table if not exists public.promotion_events (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references public.users(id) on delete set null,
