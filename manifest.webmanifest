@@ -1,0 +1,12 @@
+{
+  "name": "ShopNear — Find best prices nearby",
+  "short_name": "ShopNear",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f9fafb",
+  "theme_color": "#7c3aed",
+  "description": "Nearby shops, products, deals, Need It and verified emergency services.",
+  "icons": [
+    {"src":"/shopnear-icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}
+  ]
+}
