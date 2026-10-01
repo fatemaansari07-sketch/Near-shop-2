@@ -8,6 +8,8 @@ export function BidTab({ bids, onCreateBid, onOwnerOffer, onUseOffer, ownerShops
   const [budget, setBudget] = useState("");
   const [area, setArea] = useState(AREAS[0]);
   const [offerInputs, setOfferInputs] = useState({});
+  const [expanded, setExpanded] = useState({});
+  const toggle = (id) => setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
 
   return (
     <div className="pb-24">
@@ -41,10 +43,12 @@ export function BidTab({ bids, onCreateBid, onOwnerOffer, onUseOffer, ownerShops
                 <div className="font-semibold text-sm text-gray-800">{b.item}</div>
                 <div className="text-xs text-gray-400">Budget {formatINR(b.budget)} · {b.area} · {timeAgo(b.createdAt)}</div>
               </div>
-              <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${b.status === "open" ? "bg-blue-100 text-blue-600" : "bg-emerald-100 text-emerald-600"}`}>{b.status}</span>
+              <button type="button" onClick={() => toggle(b.id)} className={`text-[10px] font-bold px-2 py-1 rounded-full select-none ${b.status === "open" ? "bg-blue-100 text-blue-600" : "bg-emerald-100 text-emerald-600"}`}>{b.status} ({b.offers.length}) {expanded[b.id] ? "▲" : "▼"}</button>
             </div>
 
-            {b.offers.length > 0 && (
+            {expanded[b.id] && b.offers.length === 0 && <div className="mt-3 text-xs text-gray-400">Abhi tak koi offer nahi aaya</div>}
+
+            {expanded[b.id] && b.offers.length > 0 && (
               <div className="mt-3 space-y-2">
                 {b.offers.map((o, i) => (
                   <div key={i} className="bg-indigo-50 rounded-lg p-2 flex justify-between items-center text-xs">
@@ -54,7 +58,7 @@ export function BidTab({ bids, onCreateBid, onOwnerOffer, onUseOffer, ownerShops
               </div>
             )}
 
-            {ownerShops.length > 0 && (
+            {expanded[b.id] && ownerShops.length > 0 && (
               <div className="mt-3 flex gap-2">
                 <input
                   value={offerInputs[b.id] || ""} onChange={(e) => setOfferInputs({ ...offerInputs, [b.id]: e.target.value.replace(/\D/g, "") })}
