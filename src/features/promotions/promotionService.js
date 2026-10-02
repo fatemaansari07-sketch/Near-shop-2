@@ -1,7 +1,7 @@
 export const PROMOTION_OPTIONS = [
   { key: 'shop_boost', label: '⭐ Promote Shop', price: 10, scope: 'shop', hours: 24, badge: 'PROMOTED' },
   { key: 'product_boost', label: '🔥 Promote Product', price: 10, scope: 'product', hours: 24, badge: 'FEATURED' },
-  { key: 'discount', label: '🏷️ Discount Offer', price: 10, scope: 'product', hours: 24, badge: 'SPECIAL OFFER' },
+  { key: 'discount', label: '🏷️ Discount Deal — 24h', price: 10, scope: 'product', hours: 24, badge: 'SPECIAL DEAL' },
   { key: 'flash', label: '⚡ Flash Deal', price: 20, scope: 'product', hours: 24, badge: 'FLASH DEAL' },
   { key: 'nearby_first', label: '📍 Nearby Me First', price: 20, scope: 'shop', hours: 24, badge: 'NEARBY FIRST' },
   { key: 'top_shop', label: '🏆 Top Shop', price: 30, scope: 'shop', hours: 24, badge: 'TOP SHOP' },
