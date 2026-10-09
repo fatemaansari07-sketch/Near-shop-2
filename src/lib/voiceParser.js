@@ -103,37 +103,41 @@ export function parseSaleVoice(text, products = []) {
     });
     if (exactInside) return exactInside;
 
-    const beforeCandidates = [];
-    const afterCandidates = [];
-    products.forEach(product => {
-      const words = productWords(product);
-      if (!words.length) return;
-      const positions = [];
-      words.forEach(word => {
-        let from = 0;
-        while (from < s.length) {
-          const idx = s.indexOf(word, from);
-          if (idx < 0) break;
-          positions.push(idx);
-          from = idx + word.length;
+    // A connector word (aur, and, ya, comma...) between a quantity phrase and a product name
+    // means they belong to different items: "5 goli paracetamol AUR ek patta dolo".
+    const hasConnector = (a, b) => /\b(aur|and|ya|or|plus|phir)\b|,/.test(s.slice(a, b));
+    const pick = (sameSegmentOnly) => {
+      const beforeCandidates = [];
+      const afterCandidates = [];
+      products.forEach(product => {
+        const words = productWords(product);
+        if (!words.length) return;
+        const positions = [];
+        words.forEach(word => {
+          let from = 0;
+          while (from < s.length) {
+            const idx = s.indexOf(word, from);
+            if (idx < 0) break;
+            positions.push(idx);
+            from = idx + word.length;
+          }
+        });
+        const before = positions.filter(pos => pos < phrase.start && (!sameSegmentOnly || !hasConnector(pos, phrase.start)));
+        const after = positions.filter(pos => pos >= phrase.end && (!sameSegmentOnly || !hasConnector(phrase.end, pos)));
+        if (before.length) {
+          const pos = Math.max(...before);
+          beforeCandidates.push({ product, score: -(phrase.start - pos), pos });
+        } else if (after.length) {
+          const pos = Math.min(...after);
+          afterCandidates.push({ product, score: -(pos - phrase.end), pos });
         }
       });
-      const before = positions.filter(pos => pos < phrase.start);
-      const after = positions.filter(pos => pos >= phrase.end);
-      // Natural speech usually says quantity before the product or quantity after a product.
-      // Prefer the nearest product that has already been spoken; only use a following product
-      // when there is no preceding candidate.
-      if (before.length) {
-        const pos = Math.max(...before);
-        beforeCandidates.push({ product, score: -(phrase.start - pos), pos });
-      } else if (after.length) {
-        const pos = Math.min(...after);
-        afterCandidates.push({ product, score: -(pos - phrase.end), pos });
-      }
-    });
-    const candidates = beforeCandidates.length ? beforeCandidates : afterCandidates;
-    candidates.sort((a, b) => b.score - a.score);
-    return candidates[0]?.product || null;
+      const candidates = beforeCandidates.length ? beforeCandidates : afterCandidates;
+      candidates.sort((a, b) => b.score - a.score);
+      return candidates[0]?.product || null;
+    };
+    // Prefer a product in the same spoken segment; fall back to the old nearest-product rule.
+    return pick(true) || pick(false);
   };
 
   const out = [];
