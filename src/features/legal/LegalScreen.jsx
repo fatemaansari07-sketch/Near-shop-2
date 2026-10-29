@@ -2,7 +2,7 @@ import React from "react";
 import { ArrowLeft } from "lucide-react";
 
 // TODO: apna support email yahan likho (Play Store ke liye zaroori). Khali rakha to contact line nahi dikhegi.
-const CONTACT_EMAIL = "";
+const CONTACT_EMAIL = "shahidrock1011@gmail.com";
 const UPDATED = "29 October 2026";
 
 const PRIVACY = [
