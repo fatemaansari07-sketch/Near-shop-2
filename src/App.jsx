@@ -1,0 +1,811 @@
+import React, { useState, useEffect, useMemo } from "react";
+import { Search, Flame, Megaphone, Gavel, User, Camera, ShieldCheck } from "./shared/icons";
+import { supabase } from "./supabaseClient";
+import { genId, shopFromRow, bidFromRow, productFromRow, AREAS } from "./data/mockData";
+import { LoginScreen, BottomNav } from "./components/AppChrome";
+import { InterstitialAd } from "./features/ads/InterstitialAd";
+import { DiscoverTab, ShopDetail, PriceCheckScreen } from "./features/discover/Discover";
+import { FeedTab } from "./features/feed/FeedTab";
+import { BidTab } from "./features/bid/BidTab";
+import { useOwnerSeen, useCustSeen, ownerBidAlerts, customerNewOffers } from "./features/bid/bidUtils";
+import { ProfileTab, LeaderboardScreen } from "./features/profile/Profile";
+import { AddShopForm, BarcodeScanModal } from "./features/shops/ShopForms";
+import { MyShopDashboard } from "./features/shop/ShopManagement";
+import { ShopReportScreen } from "./features/shop/ShopReportScreen";
+import { SellFlow } from "./features/billing/SellFlow";
+import { AdminPanel, EnterpriseTab, DataPortal } from "./features/admin/Admin";
+import { NeedItScreen } from "./features/needIt/NeedItScreen";
+import { setInventoryMeta } from "./lib/inventory";
+import DealsScreen from "./features/deals/DealsScreen";
+import LegalScreen from "./features/legal/LegalScreen";
+import { completeSaleRpc, undoSaleRpc } from "./features/billing/billApi";
+import DealNotifier from "./features/notifications/DealNotifier";
+import { useDealSeen, markDealsSeen, buildFeed, broadcastFromRow } from "./features/notifications/notifyStore";
+import KhataScreen, { useKhataBackground } from "./features/khata/KhataScreen";
+import Emergency, { EmergencySuggest } from "./features/emergency/Emergency";
+import { makePromotion, PROMOTION_OPTIONS } from "./features/promotions/promotionService";
+
+function AppInner() {
+  const [user, setUser] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [screen, setScreen] = useState("discover");
+  const [activeShop, setActiveShop] = useState(null);
+  const [sellShopId, setSellShopId] = useState(null);
+  const [reportShopId, setReportShopId] = useState(null);
+  const [priceCheckSeed, setPriceCheckSeed] = useState({ name: "", price: "" });
+  const [showAd, setShowAd] = useState(false);
+  const [tabSwitches, setTabSwitches] = useState(0);
+  const [location, setLocation] = useState("Surat, Gujarat (default)");
+  const [userCoords, setUserCoords] = useState({ lat: 21.1702, lng: 72.8311 });
+  const [needRequests, setNeedRequests] = useState([]);
+  const [emergencyServices, setEmergencyServices] = useState([]);
+  const [showEmergencySuggest, setShowEmergencySuggest] = useState(false);
+
+  const [shops, setShops] = useState([]);
+  const [bids, setBids] = useState([]);
+  const [feed, setFeed] = useState([]);
+  const [salesLog, setSalesLog] = useState([]);
+  const [dataLicenses, setDataLicenses] = useState([]);
+  const [activeDataLicense, setActiveDataLicense] = useState(null);
+  const [users, setUsers] = useState([]);
+  const [blockedList, setBlockedList] = useState({ phones: [], addresses: [] });
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const SESSION_KEY = "shopnear_user_v1";
+
+  // ---- Initial load: pull everything from Supabase once on mount ----
+  useEffect(() => {
+    try { const saved = JSON.parse(localStorage.getItem(SESSION_KEY) || "null"); if (saved?.id) setUser(saved); } catch {}
+    async function loadAll() {
+      try {
+        const [
+          { data: shopRows }, { data: productRows }, { data: reviewRows },
+          { data: bidRows }, { data: offerRows }, { data: feedRows },
+          { data: salesRows }, { data: blockedRows }, { data: licenseRows }, { data: userRows }, { data: emergencyRows },
+        ] = await Promise.all([
+          supabase.from("shops").select("*"),
+          supabase.from("products").select("*"),
+          supabase.from("reviews").select("*"),
+          supabase.from("bids").select("*").order("created_at", { ascending: false }),
+          supabase.from("bid_offers").select("*"),
+          supabase.from("feed_posts").select("*").order("created_at", { ascending: false }),
+          supabase.from("sales_log").select("*").order("created_at", { ascending: false }),
+          supabase.from("blocked_entities").select("*"),
+          supabase.from("data_licenses").select("*").order("created_at", { ascending: false }),
+          supabase.from("users").select("*"),
+          supabase.from("emergency_services").select("*").order("created_at", { ascending: false }),
+        ]);
+
+        const { data: needRows, error: needErr } = await supabase.from("need_requests").select("*").order("created_at", { ascending: false });
+        if (!needErr) {
+          const now = Date.now();
+          const active = (needRows || []).filter(r => new Date(r.expires_at).getTime() > now && r.status !== "expired");
+          setNeedRequests(active);
+          const expired = (needRows || []).filter(r => new Date(r.expires_at).getTime() <= now && r.status === "open").map(r => r.id);
+          if (expired.length) await supabase.from("need_requests").update({ status: "expired" }).in("id", expired);
+        }
+        const mergedShops = (shopRows || []).map((r) => shopFromRow(r, productRows, reviewRows));
+        const shopsById = Object.fromEntries(mergedShops.map((s) => [s.id, s]));
+
+        setShops(mergedShops);
+        setBids((bidRows || []).map((r) => bidFromRow(r, offerRows, shopsById)));
+        setFeed((feedRows || []).map((r) => ({ id: r.id, shopName: shopsById[r.shop_id]?.name || "Shop", text: r.text, likes: r.likes, time: new Date(r.created_at).getTime() })));
+        setSalesLog((salesRows || []).map((r) => ({
+          id: r.id, shopId: r.shop_id, shopName: shopsById[r.shop_id]?.name || "Shop", area: r.area, city: r.city, state: r.state, country: r.country,
+          category: r.category, productName: r.product_name, qty: Number(r.qty), revenue: Number(r.revenue), timestamp: new Date(r.created_at).getTime(),
+        })));
+        setBlockedList({
+          phones: (blockedRows || []).filter((b) => b.type === "phone").map((b) => b.value),
+          addresses: (blockedRows || []).filter((b) => b.type === "address").map((b) => b.value),
+        });
+        setDataLicenses((licenseRows || []).map((r) => ({ id: r.id, code: r.code, level: r.level, value: r.value, category: r.category, revoked: r.revoked, createdAt: new Date(r.created_at).getTime() })));
+        setUsers((userRows || []).map((r) => ({ id: r.id, name: r.name, phone: r.phone, points: r.points, streak: r.streak, lastCheckIn: r.last_check_in ? new Date(r.last_check_in).getTime() : null, isBlocked: r.is_blocked, referralCode: r.referral_code })));
+        setEmergencyServices(emergencyRows || []);
+      } catch (err) {
+        console.error("Failed to load data from Supabase:", err);
+        setLoadError("Database se data load nahi ho paya. Environment variables check kariye.");
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadAll();
+  }, []);
+
+  const openNeedIt = () => { setScreen("needIt"); setShowAd(true); };
+  const refreshNeedRequests = async () => {
+    const { data } = await supabase.from("need_requests").select("*").order("created_at", { ascending: false });
+    if (data) {
+      const now = Date.now();
+      const expired = data.filter(r => new Date(r.expires_at).getTime() <= now && r.status === "open").map(r => r.id);
+      if (expired.length) await supabase.from("need_requests").update({ status: "expired" }).in("id", expired);
+      setNeedRequests(data.filter(r => new Date(r.expires_at).getTime() > now && r.status !== "expired"));
+    }
+  };
+  useEffect(() => { if (!user) return; const t=setInterval(refreshNeedRequests,15000); return()=>clearInterval(t); }, [user]);
+  const khataPending = useKhataBackground(user, shops);
+  const [khataBack, setKhataBack] = useState("profile");
+  const [broadcasts, setBroadcasts] = useState([]);
+  const [legalDoc, setLegalDoc] = useState(null);
+  const dealSeen = useDealSeen();
+  const [dealTarget, setDealTarget] = useState(null); // deal se aaye to seedha product khule
+  const ownerSeen = useOwnerSeen();
+  const custSeen = useCustSeen();
+  const refreshBids = async () => {
+    const [{ data: b }, { data: o }] = await Promise.all([
+      supabase.from("bids").select("*").order("created_at", { ascending: false }),
+      supabase.from("bid_offers").select("*"),
+    ]);
+    if (b) { const byId = Object.fromEntries(shops.map((s) => [s.id, s])); setBids(b.map((r) => bidFromRow(r, o, byId))); }
+  };
+  // Sabhi users ko naye deals/broadcasts dikhein: promotions + broadcasts har 30s me refresh.
+  const refreshPromotions = async () => {
+    try {
+      const [{ data: sp }, { data: pp }, { data: bc }] = await Promise.all([
+        supabase.from("shops").select("id,promotion"),
+        supabase.from("products").select("id,promotion,stock"),
+        supabase.from("broadcasts").select("*").gt("expires_at", new Date().toISOString()).order("created_at", { ascending: false }).limit(150),
+      ]);
+      if (sp && pp) {
+        const sm = Object.fromEntries(sp.map((r) => [r.id, r.promotion || null]));
+        const pm = Object.fromEntries(pp.map((r) => [r.id, r]));
+        setShops((prev) => {
+          let changed = false;
+          const next = prev.map((x) => {
+            const sPromo = x.id in sm ? sm[x.id] : x.promotion;
+            let pChanged = false;
+            const products = (x.products || []).map((p) => { const row = pm[p.id]; if (!row) return p; const np = row.promotion || null; const ns = row.stock != null ? Number(row.stock) : p.stock; if (JSON.stringify(np) !== JSON.stringify(p.promotion || null) || Math.abs(ns - Number(p.stock)) > 1e-9) { pChanged = true; return { ...p, promotion: np, stock: ns }; } return p; });
+            if (pChanged || JSON.stringify(sPromo || null) !== JSON.stringify(x.promotion || null)) { changed = true; return { ...x, promotion: sPromo, products: pChanged ? products : x.products }; }
+            return x;
+          });
+          return changed ? next : prev;
+        });
+      }
+      if (bc) setBroadcasts(bc.map(broadcastFromRow));
+    } catch {}
+  };
+  useEffect(() => { if (!user) return; refreshPromotions(); const t = setInterval(refreshPromotions, 30000); return () => clearInterval(t); }, [user]); // eslint-disable-line
+  const dealFeed = useMemo(() => buildFeed({ shops, broadcasts, userCoords, userId: user?.id }), [shops, broadcasts, userCoords, user?.id]);
+  const createBroadcast = async (b) => {
+    const { data, error } = await supabase.from("broadcasts").insert({ shop_id: b.shopId, product_id: b.productId || null, kind: b.kind, title: b.title, price: b.price, old_price: b.oldPrice || null, message: b.message, images: b.images }).select().single();
+    if (error) { alert("Broadcast nahi gaya: " + error.message); return false; }
+    setBroadcasts((prev) => [broadcastFromRow(data), ...prev]);
+    await supabase.from("promotion_events").insert({ user_id: user.id, shop_id: b.shopId, product_id: b.productId || null, type: "broadcast", amount: 19, status: "mock_paid", payload: { title: b.title } });
+    return true;
+  };
+  const openFeedItem = (it) => {
+    const s = shops.find((x) => x.id === it.shopId);
+    if (!s) return;
+    markDealsSeen([it.id]);
+    setDealTarget(it.productId ? { shopId: s.id, productId: it.productId } : null);
+    setActiveShop(s); setScreen("shopDetail");
+  };
+  useEffect(() => { if (!user) return; const t = setInterval(refreshBids, 15000); return () => clearInterval(t); }, [user, shops]); // eslint-disable-line
+  const changeTab = (key) => {
+    if (key === "needIt") setShowAd(true);
+    setTabSwitches((c) => {
+      const next = c + 1;
+      if (next % 3 === 0) setShowAd(true);
+      return next;
+    });
+    setScreen(key);
+  };
+
+  const handleLogin = async (phone) => {
+    try {
+      let existing = users.find((u) => u.phone === phone);
+      if (!existing) {
+        const { data, error } = await supabase
+          .from("users")
+          .insert({ phone, name: "Naya User", referral_code: genId("REF").toUpperCase() })
+          .select()
+          .single();
+        if (error) {
+          if (error.code === "23505") {
+            // User already exists in the DB but our local cache missed it (e.g. loaded
+            // before this account was created elsewhere) — just fetch it instead.
+            const { data: found, error: findErr } = await supabase.from("users").select("*").eq("phone", phone).single();
+            if (findErr || !found) { alert("Login error: " + error.message); return; }
+            existing = { id: found.id, name: found.name, phone: found.phone, points: found.points, streak: found.streak, lastCheckIn: found.last_check_in ? new Date(found.last_check_in).getTime() : null, isBlocked: found.is_blocked, referralCode: found.referral_code };
+          } else {
+            alert("Login error: " + error.message);
+            return;
+          }
+        } else {
+          existing = { id: data.id, name: data.name, phone: data.phone, points: data.points, streak: data.streak, lastCheckIn: null, isBlocked: false, referralCode: data.referral_code };
+        }
+        setUsers((u) => [...u, existing]);
+      }
+      setUser(existing);
+      try { localStorage.setItem(SESSION_KEY, JSON.stringify(existing)); } catch {}
+      setShowAd(true);
+    } catch (err) {
+      alert("Login fail hua: " + err.message);
+    }
+  };
+
+  const handleAdminLogin = async (password) => {
+    const { data, error } = await supabase.rpc("admin_login", { p_password: password });
+    if (error) { alert("Admin setup baaki hai: Supabase me 20261017_admin_and_bills.sql Run karke password set kariye."); return false; }
+    if (data === true) { setIsAdmin(true); setShowAd(false); return true; }
+    return false;
+  };
+
+  const blockCheck = (phone, address) => blockedList.phones.includes(phone) || blockedList.addresses.includes(address);
+
+  const myShops = user ? shops.filter((s) => s.owner_id === user.id) : [];
+  const userView = user ? { ...user, myShopIds: myShops.map((s) => s.id) } : null;
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-violet-500 to-purple-600">
+        <div className="text-white text-center">
+          <div className="text-4xl mb-2">🏪</div>
+          <div className="font-semibold">Loading ShopNear...</div>
+          {loadError && <div className="text-red-200 text-sm mt-3 max-w-xs">{loadError}</div>}
+        </div>
+      </div>
+    );
+  }
+
+  if (legalDoc) {
+    return <LegalScreen doc={legalDoc} onBack={() => setLegalDoc(null)} onSwitch={setLegalDoc} />;
+  }
+
+  if (activeDataLicense) {
+    return <DataPortal license={activeDataLicense} salesLog={salesLog} onBack={() => setActiveDataLicense(null)} />;
+  }
+
+  if (!user && !isAdmin) {
+    return (
+      <LoginScreen
+        onLogin={handleLogin} onAdminLogin={handleAdminLogin} onOpenLegal={setLegalDoc} blockedPhones={blockedList.phones}
+        dataLicenses={dataLicenses} onViewData={(lic) => setActiveDataLicense(lic)}
+      />
+    );
+  }
+
+  if (isAdmin) {
+    return (
+      <div className="max-w-md mx-auto bg-gray-50 min-h-screen font-sans">
+        <AdminPanel
+          shops={shops} users={users} bids={bids} salesLog={salesLog} dataLicenses={dataLicenses} blockedList={blockedList}
+          onBlockShop={async (id) => {
+            const s = shops.find((x) => x.id === id);
+            await supabase.from("shops").update({ is_blocked: true }).eq("id", id);
+            await supabase.from("blocked_entities").insert([{ type: "phone", value: s.phone }, { type: "address", value: s.address }]);
+            setShops((prev) => prev.map((x) => (x.id === id ? { ...x, isBlocked: true } : x)));
+            setBlockedList((b) => ({ phones: [...new Set([...b.phones, s.phone])], addresses: [...new Set([...b.addresses, s.address])] }));
+          }}
+          onUnblockShop={async (id) => {
+            const s = shops.find((x) => x.id === id);
+            await supabase.from("shops").update({ is_blocked: false }).eq("id", id);
+            await supabase.from("blocked_entities").delete().in("value", [s.phone, s.address]);
+            setShops((prev) => prev.map((x) => (x.id === id ? { ...x, isBlocked: false } : x)));
+            setBlockedList((b) => ({ phones: b.phones.filter((p) => p !== s.phone), addresses: b.addresses.filter((a) => a !== s.address) }));
+          }}
+          onBlockUser={async (id) => {
+            const u = users.find((x) => x.id === id);
+            await supabase.from("users").update({ is_blocked: true }).eq("id", id);
+            await supabase.from("blocked_entities").insert({ type: "phone", value: u.phone });
+            setUsers((prev) => prev.map((x) => (x.id === id ? { ...x, isBlocked: true } : x)));
+            setBlockedList((b) => ({ ...b, phones: [...new Set([...b.phones, u.phone])] }));
+          }}
+          onUnblockUser={async (id) => {
+            const u = users.find((x) => x.id === id);
+            await supabase.from("users").update({ is_blocked: false }).eq("id", id);
+            await supabase.from("blocked_entities").delete().eq("value", u.phone);
+            setUsers((prev) => prev.map((x) => (x.id === id ? { ...x, isBlocked: false } : x)));
+            setBlockedList((b) => ({ ...b, phones: b.phones.filter((p) => p !== u.phone) }));
+          }}
+          onGenerateLicense={async (scope) => {
+            const code = `SN-${genId("").toUpperCase()}`;
+            const { data } = await supabase.from("data_licenses").insert({ code, level: scope.level, value: scope.value, category: scope.category }).select().single();
+            if (data) setDataLicenses((prev) => [{ id: data.id, code: data.code, level: data.level, value: data.value, category: data.category, revoked: false, createdAt: Date.now() }, ...prev]);
+          }}
+          onRevokeLicense={async (id) => {
+            const lic = dataLicenses.find((l) => l.id === id);
+            await supabase.from("data_licenses").update({ revoked: !lic.revoked }).eq("id", id);
+            setDataLicenses((prev) => prev.map((l) => (l.id === id ? { ...l, revoked: !l.revoked } : l)));
+          }}
+          emergencyServices={emergencyServices}
+          onAddEmergency={async (form) => {
+            const { data, error } = await supabase.from("emergency_services").insert({ ...form, city: form.city || "Surat", lat: Number(form.lat) || null, lng: Number(form.lng) || null, source:form.source || "authorized", status:"verified", verified:true, verified_by:user?.phone || "admin", verified_at:new Date().toISOString() }).select().single();
+            if (error) { alert("Emergency place add nahi hua: " + error.message); return; }
+            setEmergencyServices(prev=>[data,...prev]);
+          }}
+          onVerifyEmergency={async (item) => {
+            const { data, error } = await supabase.from("emergency_services").update({ status:"verified", verified:true, verified_by:user?.phone || "admin", verified_at:new Date().toISOString(), updated_at:new Date().toISOString() }).eq("id",item.id).select().single();
+            if (error) { alert("Verify nahi hua: " + error.message); return; }
+            setEmergencyServices(prev=>prev.map(x=>x.id===item.id?(data||{...x,status:"verified",verified:true}):x));
+          }}
+          onRejectEmergency={async (item) => {
+            const { error } = await supabase.from("emergency_services").update({ status:"rejected", verified:false, updated_at:new Date().toISOString() }).eq("id",item.id);
+            if (error) { alert("Reject nahi hua: " + error.message); return; }
+            setEmergencyServices(prev=>prev.map(x=>x.id===item.id?{...x,status:"rejected",verified:false}:x));
+          }}
+          onLogout={() => setIsAdmin(false)}
+        />
+      </div>
+    );
+  }
+
+  const ownerAlerts = ownerBidAlerts(bids, shops.filter((s) => s.owner_id === user?.id), ownerSeen).count;
+  const bidBadge = customerNewOffers(bids, user?.id, custSeen);
+  const tabs = [
+    { key: "discover", label: "Discover", icon: Search },
+    { key: "deals", label: "Deals", icon: Flame, badge: dealFeed.filter((i) => !dealSeen.includes(i.id)).length },
+    { key: "feed", label: "Feed", icon: Megaphone },
+    { key: "bid", label: "Bid", icon: Gavel, badge: bidBadge },
+    { key: "profile", label: "Profile", icon: User, badge: khataPending + ownerAlerts },
+    { key: "needIt", label: "Need It", icon: Camera },
+    { key: "emergency", label: "Emergency", icon: ShieldCheck },
+  ];
+
+  return (
+    <div className="max-w-md mx-auto bg-gray-50 min-h-screen font-sans relative">
+      {showAd && <InterstitialAd onClose={() => setShowAd(false)} />}
+
+      {screen === "discover" && (
+        <DiscoverTab
+          shops={shops} user={userView} location={location} userCoords={userCoords}
+          broadcasts={broadcasts}
+          onLocate={() => {
+            if (navigator.geolocation) {
+              navigator.geolocation.getCurrentPosition(
+                (pos) => { setUserCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }); setLocation("Current Location (GPS)"); },
+                () => setLocation("Location permission denied")
+              );
+            } else {
+              setLocation("GPS not available on this device");
+            }
+          }}
+          onOpenShop={(s, p) => { setDealTarget(p ? { shopId: s.id, productId: p.id } : null); setActiveShop(s); setScreen("shopDetail"); }}
+          onAddShop={() => setScreen("addShop")}
+          onOpenMyShop={() => setScreen("myShop")}
+          onOpenEmergency={() => setScreen("emergency")}
+          onPriceCheck={(name, price) => { setPriceCheckSeed({ name, price }); setScreen("priceCheck"); }}
+          onLogSearch={async (query, category) => {
+            await supabase.from("search_events").insert({ user_id: user.id, query, category: category === "All" ? null : category, area: location });
+          }}
+        />
+      )}
+
+      {screen === "needIt" && (
+        <NeedItScreen
+          user={user} shops={shops} userCoords={userCoords} location={location} requests={needRequests}
+          onBack={() => setScreen("discover")} onOpenAd={() => setShowAd(true)}
+          onOpenShop={(s) => { if (!s) return; setActiveShop(s); setScreen("shopDetail"); }}
+          onCreateRequest={async ({category,title,details,imageUrl}) => {
+            const expiresAt = new Date(Date.now()+2*60*60*1000).toISOString();
+            // BUG FIX: city used to be hardcoded to "Surat" for every request, no matter
+            // where the customer's GPS coords actually were. Reverse-geocode the real
+            // coordinates instead, falling back to Surat only if that lookup fails.
+            let city = "Surat";
+            try {
+              const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&zoom=10&addressdetails=1&lat=${userCoords.lat}&lon=${userCoords.lng}`);
+              const geo = await geoRes.json();
+              city = geo?.address?.city || geo?.address?.town || geo?.address?.municipality || geo?.address?.county || city;
+            } catch {}
+            const { data, error } = await supabase.from("need_requests").insert({ customer_id:user.id, category, title, details, image_url:imageUrl, area:location, city, lat:userCoords.lat, lng:userCoords.lng, status:"open", expires_at:expiresAt }).select().single();
+            if(error){ alert("Need It save nahi hua: "+error.message); return; }
+            setNeedRequests(prev=>[data,...prev]);
+          }}
+          onRespond={async (requestId,shopId) => {
+            const { data, error } = await supabase.from("need_responses").insert({ request_id:requestId, shop_id:shopId, message:"Mere paas hai — shop par available hai." }).select().single();
+            if(error && error.code !== "23505"){ alert("Response nahi gaya: "+error.message); return false; }
+            await refreshNeedRequests();
+            return true;
+          }}
+          onCloseRequest={async id => { await supabase.from("need_requests").update({status:"closed",closed_at:new Date().toISOString()}).eq("id",id).eq("customer_id",user.id); setNeedRequests(p=>p.map(r=>r.id===id?{...r,status:"closed"}:r)); }}
+          onComing={async (requestId,responseId) => { await supabase.from("need_requests").update({status:"coming"}).eq("id",requestId).eq("customer_id",user.id); await supabase.from("need_responses").update({status:"coming"}).eq("id",responseId); setNeedRequests(p=>p.map(r=>r.id===requestId?{...r,status:"coming"}:r)); alert("Shop ko bata diya: aap lene aa rahe ho. Agar saman mil gaya ho to Already Bought dabakar request close kar dena."); }}
+        />
+      )}
+
+      {screen === "priceCheck" && (
+        <PriceCheckScreen
+          shops={shops} userCoords={userCoords}
+          initialProductName={priceCheckSeed.name} initialPrice={priceCheckSeed.price}
+          onBack={() => setScreen("discover")}
+          onOpenShop={(s) => { setActiveShop(s); setScreen("shopDetail"); }}
+        />
+      )}
+
+      {screen === "shopDetail" && activeShop && (
+        <ShopDetail
+          shop={shops.find((s) => s.id === activeShop.id)}
+          userCoords={userCoords}
+          initialProductId={dealTarget && dealTarget.shopId === activeShop?.id ? dealTarget.productId : null}
+          onTargetShown={() => setDealTarget(null)}
+          currentUserName={user.name}
+          onBack={() => setScreen("discover")}
+          onAddReview={async (shopId, review) => {
+            const { data } = await supabase.from("reviews").insert({ shop_id: shopId, user_name: review.user, rating: review.rating, text: review.text }).select().single();
+            const newReview = data ? { id: data.id, user: data.user_name, rating: data.rating, text: data.text, reply: null } : review;
+            setShops((prev) => prev.map((s) => (s.id === shopId ? { ...s, reviews: [newReview, ...s.reviews] } : s)));
+          }}
+          onClaimShop={async (shopId) => {
+            await supabase.from("shops").update({ owner_id: user.id, is_claimed: true }).eq("id", shopId);
+            setShops((prev) => prev.map((s) => (s.id === shopId ? { ...s, isClaimed: true, owner_id: user.id } : s)));
+            alert("Shop claim ho gayi! Ab aap My Shop se products, stock aur billing manage kar sakte hain.");
+            setScreen("myShop");
+          }}
+        />
+      )}
+
+      {screen === "deals" && (
+        <DealsScreen
+          shops={shops}
+          user={user}
+          userCoords={userCoords}
+          onBack={() => setScreen("discover")}
+          onOpenShop={(s, p) => { setDealTarget(p ? { shopId: s.id, productId: p.id } : null); setActiveShop(s); setScreen("shopDetail"); }}
+          broadcasts={broadcasts}
+          feed={dealFeed}
+          onOpenItem={openFeedItem}
+          onClaimReward={async (points) => {
+            if (!points) return;
+            const next = Number(user.points || 0) + Number(points);
+            const { error } = await supabase.from("users").update({ points: next }).eq("id", user.id);
+            if (!error) { setUser(u => ({ ...u, points: next })); setUsers(us => us.map(x => x.id === user.id ? { ...x, points: next } : x)); }
+          }}
+        />
+      )}
+
+      {screen === "emergency" && (
+        <Emergency
+          services={emergencyServices}
+          userCoords={userCoords}
+          onBack={() => setScreen("discover")}
+          onSuggest={() => setShowEmergencySuggest(true)}
+        />
+      )}
+
+      {showEmergencySuggest && <EmergencySuggest
+        onClose={() => setShowEmergencySuggest(false)}
+        onSubmit={async (form) => {
+          const { data, error } = await supabase.from("emergency_services").insert({ ...form, city: "Surat", lat: userCoords?.lat, lng: userCoords?.lng, suggested_by: user.id, source: "public_suggestion", status: "pending", verified: false }).select().single();
+          if (error) { alert("Suggestion save nahi hui: " + error.message); return; }
+          setEmergencyServices(prev => [data, ...prev]);
+          setShowEmergencySuggest(false);
+          alert("Suggestion mil gayi. Verification ke baad hi Emergency me live hogi.");
+        }}
+      />}
+
+      {screen === "feed" && (
+        <FeedTab
+          posts={feed}
+          onLike={async (id) => {
+            const post = feed.find((p) => p.id === id);
+            await supabase.from("feed_posts").update({ likes: post.likes + 1 }).eq("id", id);
+            setFeed((prev) => prev.map((p) => (p.id === id ? { ...p, likes: p.likes + 1 } : p)));
+          }}
+          onCreatePost={async (text) => {
+            const shop = myShops[0];
+            const { data } = await supabase.from("feed_posts").insert({ shop_id: shop?.id || null, text }).select().single();
+            if (data) setFeed((prev) => [{ id: data.id, shopName: shop?.name || user.name, text, likes: 0, time: Date.now() }, ...prev]);
+          }}
+        />
+      )}
+
+      {screen === "bid" && (
+        <BidTab
+          bids={bids}
+          user={user}
+          onAcceptOffer={async (bidId, shopId) => {
+            const { error } = await supabase.from("bids").update({ status: "accepted", accepted_shop_id: shopId, accepted_at: new Date().toISOString() }).eq("id", bidId);
+            if (error) { alert("Offer accept nahi hua: " + error.message); return; }
+            setBids((prev) => prev.map((b) => (b.id === bidId ? { ...b, status: "accepted", acceptedShopId: shopId } : b)));
+          }}
+          onCloseBid={async (bidId) => {
+            const { error } = await supabase.from("bids").update({ status: "closed" }).eq("id", bidId);
+            if (error) { alert("Request band nahi hui: " + error.message); return; }
+            setBids((prev) => prev.map((b) => (b.id === bidId ? { ...b, status: "closed" } : b)));
+          }}
+          onCreateBid={async (item, budget, area, category) => {
+            // BUG FIX: area used to be hardcoded to AREAS[0] ("Ring Road") for every bid,
+            // no matter where the customer actually was — now it's whatever they picked.
+            const bidArea = area || AREAS[0];
+            const bidCategory = category || "Electronics";
+            const { data, error } = await supabase.from("bids").insert({ customer_id: user.id, customer_name: user.name, customer_phone: user.phone || null, item, category: bidCategory, budget, area: bidArea }).select().single();
+            if (error) { alert("Request post nahi hui: " + error.message); return; }
+            if (data) setBids((prev) => [{ id: data.id, customer: user.name, customerId: user.id, customerPhone: user.phone, item, category: bidCategory, budget, area: bidArea, status: "open", createdAt: Date.now(), offers: [] }, ...prev]);
+          }}
+          onOwnerOffer={async (bidId, shopId, price) => {
+            const shop = shops.find((s) => s.id === shopId);
+            await supabase.from("bid_offers").insert({ bid_id: bidId, shop_id: shopId, price, message: "Available now" });
+            setBids((prev) => prev.map((b) => (b.id === bidId ? { ...b, offers: [...b.offers, { shopId, shopName: shop.name, price, message: "Available now" }] } : b)));
+          }}
+          onUseOffer={(offer) => {
+            const shop = shops.find(s => s.id === offer.shopId);
+            if (shop) { setActiveShop(shop); setScreen("shopDetail"); }
+          }}
+        />
+      )}
+
+      {screen === "profile" && (
+        <ProfileTab
+          user={userView}
+          onCheckIn={async () => {
+            const nowDate = new Date();
+            const last = user.lastCheckIn ? new Date(user.lastCheckIn) : null;
+            const today = nowDate.toDateString();
+            const yesterday = new Date(nowDate.getTime() - 86400000).toDateString();
+            if (last && last.toDateString() === today) return;
+            const newPoints = Number(user.points || 0) + 10;
+            const newStreak = last && last.toDateString() === yesterday ? Number(user.streak || 0) + 1 : 1;
+            const now = nowDate.toISOString();
+            await supabase.from("users").update({ points: newPoints, streak: newStreak, last_check_in: now }).eq("id", user.id);
+            setUser((u) => ({ ...u, points: newPoints, streak: newStreak, lastCheckIn: Date.now() }));
+            setUsers((us) => us.map(x => x.id === user.id ? { ...x, points: newPoints, streak: newStreak, lastCheckIn: Date.now() } : x));
+          }}
+          onOpenLeaderboard={() => setScreen("leaderboard")}
+          onOpenAddShop={() => setScreen("addShop")}
+          onOpenMyShop={() => setScreen("myShop")}
+          onOpenKhata={() => { setKhataBack("profile"); setScreen("khata"); }}
+          khataPending={khataPending}
+          onOpenLegal={setLegalDoc}
+          onLogout={() => { setUser(null); try { localStorage.removeItem(SESSION_KEY); } catch {} setScreen("discover"); }}
+        />
+      )}
+
+      {screen === "khata" && user && <KhataScreen user={user} myShops={myShops} onBack={() => setScreen(khataBack)} />}
+
+      {screen === "leaderboard" && <LeaderboardScreen currentUser={user} onBack={() => setScreen("profile")} />}
+
+      {screen === "addShop" && (
+        <AddShopForm
+          blockCheck={blockCheck}
+          existingShopCount={myShops.length}
+          onBack={() => setScreen(myShops.length > 0 ? "myShop" : "discover")}
+          onSubmit={async (form) => {
+            const { data, error } = await supabase.from("shops").insert({
+              owner_id: user.id, name: form.name, category: form.category, area: form.area,
+              address: form.address, phone: form.phone,
+              // BUG FIX: this used to be hardcoded to Surat/Gujarat/India for every new shop,
+              // regardless of where the owner actually was. Now uses the city/state/country
+              // captured from GPS reverse-geocoding (AddShopForm's "Use My Current Location"),
+              // falling back to Surat/Gujarat/India only if the owner typed the address by hand.
+              city: form.city || "Surat", state: form.state || "Gujarat", country: form.country || "India",
+              lat: form.coords?.lat ?? (21.17 + Math.random() * 0.05),
+              lng: form.coords?.lng ?? (72.83 + Math.random() * 0.05),
+              rating: 5.0, is_claimed: true,
+            }).select().single();
+            if (error) { alert("Shop add nahi ho payi: " + error.message); return; }
+            const newShop = shopFromRow(data, [], []);
+            setShops((prev) => [newShop, ...prev]);
+            setScreen("myShop");
+          }}
+        />
+      )}
+
+      {screen === "myShop" && (
+        <MyShopDashboard
+          shops={myShops}
+          broadcasts={broadcasts}
+          onBroadcast={createBroadcast}
+          onBack={() => setScreen("profile")}
+          onOpenKhata={() => { setKhataBack("myShop"); setScreen("khata"); }}
+          onOpenSell={(shopId) => { setSellShopId(shopId); setScreen("sell"); }}
+          onOpenReport={(shopId) => { setReportShopId(shopId); setScreen("myShopReport"); }}
+          onAddAnotherShop={() => setScreen("addShop")}
+          onPromote={async ({ shopId, productId, type, amount, hours, radiusKm, discount, message, coupon }) => {
+            const option = PROMOTION_OPTIONS.find(x => x.key === type);
+            const shop = shops.find(s => s.id === shopId);
+            const product = shop?.products.find(p => p.id === productId);
+            if (!shop || (option?.scope === "product" && !product)) return;
+            const newPrice = product && discount > 0 ? +(Number(product.price) * (1 - Number(discount) / 100)).toFixed(2) : null;
+            const promotion = makePromotion({ type, amount, hours, radiusKm: Number(radiusKm) || null, badge: option?.badge, discount: Number(discount) || 0, message, coupon, productId, productName: product?.name, originalPrice: product?.price, newPrice });
+            if (option?.scope === "product") {
+              const { error } = await supabase.from("products").update({ promotion }).eq("id", productId);
+              if (error) return alert("Promotion save nahi hua: " + error.message);
+              setShops(prev => prev.map(s => s.id !== shopId ? s : { ...s, products: s.products.map(p => p.id === productId ? { ...p, promotion } : p) }));
+              if (type === "flash") { const flashDeal = { hours, expiresAt: new Date(promotion.expiresAt).getTime(), productName: product.name, originalPrice: product.price, discountPercent: Number(discount), newPrice, bulkOffer: null }; await supabase.from("shops").update({ flash_deal: flashDeal }).eq("id", shopId); setShops(prev => prev.map(s => s.id === shopId ? { ...s, flashDeal } : s)); }
+            } else {
+              const { error } = await supabase.from("shops").update({ promotion }).eq("id", shopId);
+              if (error) return alert("Promotion save nahi hua: " + error.message);
+              setShops(prev => prev.map(s => s.id === shopId ? { ...s, promotion } : s));
+            }
+            await supabase.from("promotion_events").insert({ user_id: user.id, shop_id: shopId, product_id: productId || null, type, amount, status: "mock_paid", payload: promotion });
+            alert(`₹${amount} mock promotion active — ${option?.badge || "Promoted"}. Real payment gateway baad me connect karenge.`);
+          }}
+          needRequests={needRequests}
+          bids={bids}
+          onOpenAd={() => setShowAd(true)}
+          onNeedRespond={async (requestId, shopId) => {
+            const { error } = await supabase.from("need_responses").insert({ request_id: requestId, shop_id: shopId, message: "Mere paas hai — shop par available hai." });
+            if (error && error.code !== "23505") { alert("Need It response nahi gaya: " + error.message); return false; }
+            await refreshNeedRequests();
+            return true;
+          }}
+          onBidOffer={async (bidId, shopId, price) => {
+            const bid = bids.find(b => b.id === bidId);
+            const shop = shops.find(s => s.id === shopId);
+            if (!bid || !shop || shop.category !== bid.category) { alert("Is bid ki category tumhari shop se match nahi karti."); return; }
+            const { error } = await supabase.from("bid_offers").insert({ bid_id: bidId, shop_id: shopId, price, message: "Available now" });
+            if (error && error.code !== "23505") { alert("Bid offer save nahi hua: " + error.message); return; }
+            setBids(prev => prev.map(b => b.id === bidId ? { ...b, offers: [...(b.offers || []), { shopId, shopName: shop.name, price, message: "Available now" }] } : b));
+            alert("Offer customer ko bhej diya. Dusre shops ke offers owner ko nahi dikhaye jayenge.");
+          }}
+          onDeleteShop={async (shopId) => {
+            const { error } = await supabase.from("shops").delete().eq("id", shopId);
+            if (error) { alert("Delete nahi ho paya: " + error.message); return; }
+            setShops((prev) => prev.filter((s) => s.id !== shopId));
+          }}
+          onUpdateShopSettings={async (shopId, changes) => {
+            const { error } = await supabase.from("shops").update(changes).eq("id", shopId);
+            if (error) { alert("Shop setting save nahi hui: " + error.message); return; }
+            setShops(prev=>prev.map(s=>s.id===shopId?{...s,homeDeliveryAvailable:changes.home_delivery_available!==undefined?changes.home_delivery_available:s.homeDeliveryAvailable,deliveryRadiusKm:changes.delivery_radius_km!==undefined?changes.delivery_radius_km:s.deliveryRadiusKm,deliveryAreas:changes.delivery_areas!==undefined?changes.delivery_areas:s.deliveryAreas}:s));
+          }}
+          onUpdateProduct={async (shopId, productId, changes) => {
+            const shop = shops.find((s) => s.id === shopId);
+            const product = shop.products.find((p) => p.id === productId);
+            const newHistory = [...(product.history || []), { date: "Today", price: Number(changes.price) }];
+            const dbChanges = { name: changes.name, price: Number(changes.price), unit: changes.unit, stock: Number(changes.stock), pack_size: changes.unit === "pack" ? Math.max(1, Number(changes.packSize || 10)) : null, history: newHistory, image_url: changes.imageUrl !== undefined ? changes.imageUrl : (product.imageUrl || null), expiry_date: changes.expiryDate || null, barcode: changes.barcode || null, category_data: changes.categoryData || product.categoryData || {}, last_updated: new Date().toISOString() };
+            const { error } = await supabase.from("products").update(dbChanges).eq("id", productId);
+            if (error) { alert("Product update nahi hua: " + error.message); return null; }
+            setShops((prev) => prev.map((s) => s.id !== shopId ? s : { ...s, products: s.products.map((p) => p.id !== productId ? p : { ...p, ...changes, price: Number(changes.price), stock: Number(changes.stock), lastUpdated: Date.now(), imageUrl: changes.imageUrl !== undefined ? changes.imageUrl : (p.imageUrl || null), expiryDate: changes.expiryDate || null, barcode: changes.barcode || null, packSize: changes.unit === "pack" ? Math.max(1, Number(changes.packSize || 10)) : null }) }));
+            return { id: productId, packSize: changes.unit === "pack" ? Number(changes.packSize || 10) : null };
+          }}
+          onAddProduct={async (shopId, name, price, unit, stock, imageUrl, expiryDate, barcode, packSize, categoryData = {}, importSource = "manual") => {
+            const baseStock = unit === "pack" ? Number(stock) * Math.max(1, Number(packSize || 10)) : Number(stock);
+            const row = { shop_id: shopId, name, price, unit, stock: baseStock, pack_size: unit === "pack" ? Math.max(1, Number(packSize || 10)) : null, history: importSource === "pc_import" ? [] : [{ date: "Today", price }], image_url: imageUrl || null, expiry_date: expiryDate || null, barcode: barcode || null, category_data: categoryData || {}, import_source: importSource, baseline_price: Number(price), imported_at: importSource === "pc_import" ? new Date().toISOString() : null };
+            const { data, error } = await supabase.from("products").insert(row).select().single();
+            if (error) { alert("Product add nahi hua: " + error.message); return null; }
+            const product = { ...productFromRow(data), packSize: unit === "pack" ? Number(packSize || 10) : null };
+            if (unit === "pack") setInventoryMeta(data.id, { packSize: Number(packSize || 10) });
+            setShops((prev) => prev.map((s) => (s.id !== shopId ? s : { ...s, products: [...s.products, product] })));
+            return product;
+          }}
+          onImportProducts={async (shopId, rows) => {
+            const shop = shops.find(s => s.id === shopId);
+            if (!shop) return;
+            let added = 0, updated = 0;
+            for (const r of rows) {
+              const existing = shop.products.find(p => (r.barcode && p.barcode === r.barcode) || p.name.trim().toLowerCase() === String(r.name).trim().toLowerCase());
+              const packSize = r.unit === "pack" ? Math.max(1, Number(r.packSize || 10)) : null;
+              const baseStock = r.unit === "pack" ? Number(r.stock) * packSize : Number(r.stock);
+              if (existing) {
+                const { error } = await supabase.from("products").update({ name:r.name, price:Number(r.price), unit:r.unit || "piece", stock:baseStock, pack_size:packSize, expiry_date:r.expiryDate || null, barcode:r.barcode || existing.barcode || null, category_data:r.categoryData || {}, import_source:"pc_import", baseline_price:Number(r.price), imported_at:new Date().toISOString() }).eq("id", existing.id);
+                if (!error) updated++;
+              } else {
+                const { data, error } = await supabase.from("products").insert({ shop_id:shopId, name:r.name, price:Number(r.price), unit:r.unit || "piece", stock:baseStock, pack_size:packSize, history:[], image_url:null, expiry_date:r.expiryDate || null, barcode:r.barcode || null, category_data:r.categoryData || {}, import_source:"pc_import", baseline_price:Number(r.price), imported_at:new Date().toISOString() }).select().single();
+                if (!error && data) { setShops(prev=>prev.map(s=>s.id===shopId?{...s,products:[...s.products,productFromRow(data)]}:s)); added++; }
+              }
+            }
+            const { data: refreshedProducts } = await supabase.from("products").select("*").eq("shop_id", shopId);
+            if (refreshedProducts) setShops(prev=>prev.map(s=>s.id===shopId?{...s,products:refreshedProducts.map(productFromRow)}:s));
+            alert(`PC import complete: ${added} new + ${updated} updated. Imported price ko old NearShop price history nahi maana gaya.`);
+          }}
+        />
+      )}
+
+      {screen === "myShopReport" && reportShopId && (
+        <ShopReportScreen
+          shop={shops.find((s) => s.id === reportShopId)}
+          salesLog={salesLog}
+          onBack={() => setScreen("myShop")}
+          onQuickDiscount={async (shopId, productName, discountPercent) => {
+            const shop = shops.find((s) => s.id === shopId);
+            const product = shop?.products.find((p) => p.name === productName);
+            if (!shop || !product) return;
+            const pct = Number(discountPercent);
+            if (!(pct > 0 && pct < 100)) return alert("1-99% discount daaliye.");
+            const originalPrice = Number(product.price) || 0;
+            const newPrice = +(originalPrice * (1 - pct / 100)).toFixed(2);
+            const promotion = makePromotion({ type: "discount", amount: 10, hours: 24, badge: "SPECIAL DEAL", discount: pct, productId: product.id, productName: product.name, originalPrice, newPrice, message: "Report se 24-hour discount deal" });
+            const { error } = await supabase.from("products").update({ promotion }).eq("id", product.id);
+            if (error) { alert("Discount deal save nahi hua: " + error.message); return; }
+            setShops(prev => prev.map(s => s.id===shopId ? { ...s, products:s.products.map(p=>p.id===product.id ? { ...p, promotion } : p) } : s));
+            await supabase.from("promotion_events").insert({ user_id:user.id, shop_id:shopId, product_id:product.id, type:"discount", amount:10, status:"mock_paid", payload:promotion });
+            alert(`₹10 mock promotion active — ${pct}% OFF, 24 hours. Deal Deals section me dikhega.`);
+          }}
+        />
+      )}
+
+      {screen === "sell" && sellShopId && (
+        <SellFlow
+          shop={shops.find((s) => s.id === sellShopId)}
+          onBack={() => setScreen("myShop")}
+          onCompleteSale={async (shopId, cartItems, meta) => {
+            const shop = shops.find((s) => s.id === shopId);
+            const r = await completeSaleRpc(shopId, cartItems, meta);
+            if (r.error) { alert(r.error); if (r.stock) refreshPromotions(); return false; }
+            setShops((prev) => prev.map((s) => (s.id !== shopId ? s : {
+              ...s,
+              products: s.products.map((p) => {
+                const item = cartItems.find((c) => c.productId === p.id);
+                return item ? { ...p, stock: +(p.stock - item.baseQty).toFixed(3), lastUpdated: Date.now() } : p;
+              }),
+            })));
+            const { data: rows } = await supabase.from("sales_log").select("*").eq("bill_id", r.billId);
+            if (rows) {
+              setSalesLog((prev) => [
+                ...rows.map((x) => ({
+                  id: x.id, billId: x.bill_id, shopId: x.shop_id, shopName: shop.name, area: x.area, city: x.city, state: x.state, country: x.country,
+                  category: x.category, productName: x.product_name, qty: Number(x.qty), revenue: Number(x.revenue), timestamp: Date.now(),
+                })),
+                ...prev,
+              ]);
+            }
+            return r.billId;
+          }}
+          onUndoSale={async (bill) => {
+            const r = await undoSaleRpc(bill.id);
+            if (r.error) { alert(r.error); return false; }
+            setShops((prev) => prev.map((s) => (s.id !== bill.shop_id ? s : {
+              ...s,
+              products: s.products.map((p) => {
+                const it = (bill.items || []).find((i) => i.product_id === p.id);
+                return it ? { ...p, stock: +(p.stock + Number(it.sold_qty)).toFixed(3), lastUpdated: Date.now() } : p;
+              }),
+            })));
+            setSalesLog((prev) => prev.filter((x) => x.billId !== bill.id));
+            return true;
+          }}
+        />
+      )}
+
+      {["discover", "deals", "feed", "bid", "profile", "needIt", "emergency"].includes(screen) && (
+        <>
+          {screen !== "emergency" && (
+            <button
+              type="button"
+              onClick={() => setScreen("emergency")}
+              aria-label="Open Emergency services"
+              className="fixed right-4 bottom-[76px] z-40 w-14 h-14 rounded-full bg-red-600 text-white shadow-xl border-4 border-white flex items-center justify-center active:scale-95 transition-transform"
+            >
+              <span className="text-xl leading-none">🚨</span>
+            </button>
+          )}
+          <DealNotifier feed={dealFeed} onOpen={openFeedItem} />
+          <BottomNav tabs={tabs} active={screen} onChange={changeTab} />
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ============================================================================
+   FILE: components/ErrorBoundary.jsx
+   Safety net — if any part of the app throws (e.g. a third-party library
+   like the barcode scanner misbehaving), show a friendly recoverable screen
+   instead of a blank white page.
+============================================================================ */
+
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, message: "" };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, message: error?.message || "Kuch gadbad ho gayi" };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
+          <div className="text-center max-w-sm">
+            <div className="text-4xl mb-3">⚠️</div>
+            <div className="font-bold text-gray-800 mb-1">Kuch gadbad ho gayi</div>
+            <div className="text-xs text-gray-500 mb-4">{this.state.message}</div>
+            <button
+              onClick={() => { this.setState({ hasError: false, message: "" }); window.location.reload(); }}
+              className="bg-violet-600 text-white font-semibold px-6 py-2.5 rounded-xl text-sm"
+            >
+              Dobara try kariye
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <AppInner />
+    </ErrorBoundary>
+  );
+}
