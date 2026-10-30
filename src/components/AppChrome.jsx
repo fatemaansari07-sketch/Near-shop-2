@@ -1,0 +1,300 @@
+import React, { useRef, useState } from "react";
+import { Search, MapPin, ScanLine, Flame, Megaphone, Trophy, HomeIcon, User, Plus, Store, Phone, MessageCircle, Navigation, Star, TrendingUp, Gavel, Gift, UsersIcon, ShieldCheck, X, ChevronRight, Check, Ban, Unlock, Zap, Calendar, Award, Share2, ArrowLeft, Camera, IndianRupee, BarChart3, PieIcon, Package, Clock, Send, Lock, Trash2, Printer, Receipt, ShoppingCart, History, Key, Database, Download, LogOut, Minus, Mic, Wifi, Bell, Timer, CircleDollarSign, BadgePercent } from "../shared/icons";
+
+import { PHONE_FALLBACK, signInWithGoogle } from "../lib/auth";
+
+export function LoginScreen({ onLogin, onAdminLogin, blockedPhones, dataLicenses, onViewData, onOpenLegal }) {
+  const [phone, setPhone] = useState("");
+  const [otpSent, setOtpSent] = useState(false);
+  const [otp, setOtp] = useState("");
+  const [tapCount, setTapCount] = useState(0);
+  const [adminMode, setAdminMode] = useState(false);
+  const [adminPass, setAdminPass] = useState("");
+  const [error, setError] = useState("");
+  const [showDataBox, setShowDataBox] = useState(false);
+  const [dataCode, setDataCode] = useState("");
+  const [dataError, setDataError] = useState("");
+  const tapTimer = useRef(null);
+
+  const handleLogoTap = () => {
+    setTapCount((c) => {
+      const next = c + 1;
+      if (next >= 5) {
+        setAdminMode(true);
+        return 0;
+      }
+      return next;
+    });
+
+    clearTimeout(tapTimer.current);
+    tapTimer.current = setTimeout(() => setTapCount(0), 1200);
+  };
+
+  const sendOtp = () => {
+    if (phone.length !== 10) {
+      setError("10 digit number daaliye");
+      return;
+    }
+
+    if (blockedPhones.includes(phone)) {
+      setError("Yeh number admin dwara block kiya gaya hai.");
+      return;
+    }
+
+    setError("");
+    setOtpSent(true);
+  };
+
+  const verifyOtp = () => {
+    if (otp.length !== 4) {
+      setError("4 digit OTP daaliye (demo: 1234)");
+      return;
+    }
+
+    onLogin(phone);
+  };
+
+  const redeemDataCode = () => {
+    const lic = dataLicenses.find(
+      (l) => l.code.toLowerCase() === dataCode.trim().toLowerCase()
+    );
+
+    if (!lic) {
+      setDataError("Yeh code valid nahi hai.");
+      return;
+    }
+
+    if (lic.revoked) {
+      setDataError("Yeh access link admin ne revoke kar diya hai.");
+      return;
+    }
+
+    setDataError("");
+    onViewData(lic);
+  };
+
+  if (adminMode) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 to-indigo-950 flex items-center justify-center p-6">
+        <div className="w-full max-w-sm bg-white rounded-3xl p-6">
+          <div className="flex items-center gap-2 mb-4 text-indigo-600">
+            <ShieldCheck size={22} />
+            <span className="font-bold text-lg">Admin Login</span>
+          </div>
+
+          <input
+            className="w-full border border-gray-200 rounded-xl px-4 py-3 mb-3"
+            placeholder="Admin ID"
+            onChange={() => {}}
+          />
+
+          <input
+            type="password"
+            value={adminPass}
+            onChange={(e) => setAdminPass(e.target.value)}
+            className="w-full border border-gray-200 rounded-xl px-4 py-3 mb-4"
+            placeholder="Password"
+          />
+
+          {error && (
+            <div className="text-red-500 text-sm mb-3">
+              {error}
+            </div>
+          )}
+
+          <button
+            onClick={async () => {
+              setError("");
+              const ok = await onAdminLogin(adminPass);
+              if (!ok) setError("Galat password");
+            }}
+            className="w-full py-3 rounded-xl bg-indigo-600 text-white font-semibold"
+          >
+            Login as Admin
+          </button>
+
+          <button
+            onClick={() => setAdminMode(false)}
+            className="w-full mt-3 text-sm text-gray-400"
+          >
+            ← Back to customer login
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-violet-500 via-purple-500 to-indigo-600 flex flex-col justify-center px-6">
+      <div
+        className="text-center mb-10 select-none"
+        onClick={handleLogoTap}
+      >
+        <div className="text-6xl mb-2">🏪</div>
+
+        <div className="text-white text-3xl font-extrabold tracking-tight">
+          ShopNear
+        </div>
+
+        <div className="text-white/80 text-sm mt-1">
+          Find best prices nearby
+        </div>
+      </div>
+
+      <div className="bg-white rounded-3xl p-6 shadow-2xl">
+        <button
+          onClick={async () => { setError(""); const r = await signInWithGoogle(); if (r.error) setError(r.error); }}
+          className="w-full py-3.5 rounded-xl border border-gray-300 bg-white text-gray-800 font-semibold flex items-center justify-center gap-3 active:bg-gray-50"
+        >
+          <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 7.1-10.1 7.1-17.5z"/><path fill="#FBBC05" d="M10.5 28.7c-.5-1.4-.8-3-.8-4.7s.3-3.2.8-4.7l-7.9-6.1C.9 16.4 0 20.1 0 24s.9 7.6 2.6 10.8l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.5-5.8c-2.1 1.4-4.8 2.3-8.4 2.3-6.3 0-11.6-4.1-13.5-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>
+          Google se Sign in
+        </button>
+        <div className="text-[11px] text-gray-400 text-center mt-3">Password ya OTP ki zarurat nahi. Aapka Google account hi pehchaan hai.</div>
+        {error && !PHONE_FALLBACK && <div className="text-red-500 text-sm mt-3 text-center">{error}</div>}
+        {PHONE_FALLBACK && <div className="mt-5 pt-5 border-t border-gray-100">
+          <div className="text-[10px] text-orange-500 font-bold mb-2">TEST MODE: phone login (sirf setup ke liye)</div>
+        {!otpSent ? (
+          <>
+            <label className="text-xs text-gray-500 font-medium">
+              Mobile Number
+            </label>
+
+            <div className="flex items-center border border-gray-200 rounded-xl px-4 py-3 mt-1 mb-4">
+              <span className="text-gray-400 mr-2">+91</span>
+
+              <input
+                value={phone}
+                onChange={(e) =>
+                  setPhone(
+                    e.target.value.replace(/\D/g, "").slice(0, 10)
+                  )
+                }
+                className="flex-1 outline-none"
+                placeholder="9876543210"
+              />
+            </div>
+
+            {error && (
+              <div className="text-red-500 text-sm mb-3">
+                {error}
+              </div>
+            )}
+
+            <button
+              onClick={sendOtp}
+              className="w-full py-3 rounded-xl bg-violet-600 text-white font-semibold"
+            >
+              Send OTP
+            </button>
+          </>
+        ) : (
+          <>
+            <label className="text-xs text-gray-500 font-medium">
+              Enter OTP sent to +91 {phone}
+            </label>
+
+            <input
+              value={otp}
+              onChange={(e) =>
+                setOtp(
+                  e.target.value.replace(/\D/g, "").slice(0, 4)
+                )
+              }
+              className="w-full border border-gray-200 rounded-xl px-4 py-3 mt-1 mb-4 tracking-[0.5em] text-center text-lg"
+              placeholder="1234"
+            />
+
+            {error && (
+              <div className="text-red-500 text-sm mb-3">
+                {error}
+              </div>
+            )}
+
+            <button
+              onClick={verifyOtp}
+              className="w-full py-3 rounded-xl bg-violet-600 text-white font-semibold"
+            >
+              Verify &amp; Continue
+            </button>
+          </>
+        )}
+        </div>}
+      </div>
+
+      <div className="text-center text-white/70 text-xs mt-6">
+        Aage badhne par aap{" "}
+        <button onClick={() => onOpenLegal?.("terms")} className="underline">Terms</button> aur{" "}
+        <button onClick={() => onOpenLegal?.("privacy")} className="underline">Privacy Policy</button> se sehmat hain.
+      </div>
+
+      {!showDataBox ? (
+        <button
+          onClick={() => setShowDataBox(true)}
+          className="text-center text-white/70 text-xs mt-3 underline"
+        >
+          🔗 Have an enterprise data access code?
+        </button>
+      ) : (
+        <div className="bg-white/10 rounded-2xl p-4 mt-3">
+          <div className="text-white/80 text-xs mb-2">
+            Data access code daaliye — yehi page seedha data view me badal jaayega
+          </div>
+
+          <div className="flex gap-2">
+            <input
+              value={dataCode}
+              onChange={(e) => setDataCode(e.target.value)}
+              placeholder="e.g. SN-AB12CD"
+              className="flex-1 border border-white/30 bg-white/10 text-white placeholder-white/50 rounded-xl px-3 py-2.5 text-sm outline-none font-mono"
+            />
+
+            <button
+              onClick={redeemDataCode}
+              className="bg-emerald-500 text-white text-sm font-semibold px-4 rounded-xl"
+            >
+              Go
+            </button>
+          </div>
+
+          {dataError && (
+            <div className="text-red-200 text-xs mt-2">
+              {dataError}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============================================================================
+   FILE: components/BottomNav.jsx
+============================================================================ */
+
+export function BottomNav({ tabs, active, onChange }) {
+  return (
+    <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 flex justify-around py-2 px-2 max-w-md mx-auto">
+      {tabs.map((t) => (
+        <button
+          key={t.key}
+          onClick={() => onChange(t.key)}
+          className={`flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-xl flex-1 ${
+            active === t.key
+              ? "text-violet-600"
+              : "text-gray-400"
+          }`}
+        >
+          <span className="relative"><t.icon size={20} />{t.badge > 0 && <span className="absolute -top-1.5 -right-2.5 bg-red-500 text-white text-[9px] font-bold rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center">{t.badge > 9 ? "9+" : t.badge}</span>}</span>
+
+          <span className="text-[10px] font-medium">
+            {t.label}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ============================================================================
+   FILE: components/ShopCard.jsx
+============================================================================ */
