@@ -1,5 +1,32 @@
 -- NearShop ownership-scoped RLS and admin RPC bridge.
--- Apply only after reviewing AUDIT_PATCH_NOTES.md. Safe to re-run.
+-- Apply only after running 20261106_nearshop_schema_reconciliation.sql. Safe to re-run.
+
+-- The emergency directory migration may not have been run in older Supabase projects.
+-- Create its table before policies, grants, and admin RPCs reference it.
+create table if not exists public.emergency_services (
+  id uuid primary key default gen_random_uuid(),
+  type text not null check (type in ('Hospital','Clinic','24x7 Pharmacy','Ambulance','Petrol Pump','Garage','Tyre / Puncture','Battery / Jump Start','Mechanic','Blood Bank','Diagnostic / Lab')),
+  name text not null,
+  address text not null,
+  area text,
+  city text default 'Surat',
+  phone text,
+  lat double precision,
+  lng double precision,
+  open24 boolean not null default false,
+  open_now boolean not null default false,
+  source text not null default 'authorized',
+  status text not null default 'pending' check (status in ('pending','verified','rejected')),
+  verified boolean not null default false,
+  verified_by text,
+  verified_at timestamptz,
+  suggested_by uuid references public.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists emergency_services_live_idx on public.emergency_services(status, verified, type, city);
+create index if not exists emergency_services_geo_idx on public.emergency_services(lat,lng);
+create index if not exists emergency_services_pending_idx on public.emergency_services(status, created_at desc);
 
 create or replace function public.current_nearshop_user_id()
 returns uuid language sql stable security definer set search_path = public
