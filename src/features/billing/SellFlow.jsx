@@ -84,7 +84,7 @@ export function SellFlow({ shop, onBack, onCompleteSale, onUndoSale, onQuickAddP
   const [discountOn, setDiscountOn] = useState(false);
   const [discountPct, setDiscountPct] = useState(10);
   const [express, setExpress] = useState(false);
-  const pendingCount = shop.products.filter((p) => p.categoryData?.pending).length;
+  const pendingCount = shop.products.filter((p) => !p.archived_at && p.categoryData?.pending).length;
   const [picker, setPicker] = useState(null); // {intent:'udhar'|'tag', query, found, name, phone, links}
   const [billCust, setBillCust] = useState(null); // {id, name, phone}
   const [confirmUdhar, setConfirmUdhar] = useState(null); // customer chosen for Udhar, awaiting explicit confirm (Back allowed)
@@ -146,13 +146,13 @@ export function SellFlow({ shop, onBack, onCompleteSale, onUndoSale, onQuickAddP
   };
   const handleVoice = (full) => {
     setVoiceText(full || "");
-    const matches = parseSaleVoice(full, shop.products);
+    const matches = parseSaleVoice(full, shop.products.filter((x) => !x.archived_at)); // archived/deleted products never match
     if (!matches.length) { alert("Voice me product samajh nahi aaya. Product ka naam aur quantity dobara boliye."); return; }
     addMany(matches.map((m) => ({ product: m.product, qty: m.qty, subUnit: m.subUnit })));
   };
   const handleScan = (item) => {
     setShowScan(false);
-    const p = shop.products.find((x) => x.barcode === item.code);
+    const p = shop.products.find((x) => !x.archived_at && x.barcode === item.code);
     if (!p) { alert("Ye barcode is shop ke product se match nahi hua."); return; }
     openSheet(p);
   };
