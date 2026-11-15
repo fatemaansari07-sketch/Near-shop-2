@@ -5,15 +5,37 @@ import { Camera } from "lucide-react";
 export default function ShopProfileEditor({ shop, uploadImage, onSave }) {
   const [f, setF] = useState({ about: shop.about || "", whatsapp: shop.whatsapp || "", opening_hours: shop.opening_hours || "", logo_url: shop.logo_url || "", cover_url: shop.cover_url || "" });
   const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
   const logoRef = useRef(null), coverRef = useRef(null);
   const pick = async (key, file) => {
     if (!file) return;
-    if (!file.type.startsWith("image/")) return alert("Sirf image file choose karein.");
+    if (!file.type.startsWith("image/")) { setMessage("Sirf image file choose karein."); return; }
+    setMessage("");
     setBusy(true);
-    const url = await uploadImage(shop.id, file);
-    setBusy(false);
-    if (!url) return alert("Photo upload nahi ho payi.");
-    setF((x) => ({ ...x, [key]: url }));
+    try {
+      const url = await uploadImage(shop.id, file);
+      if (!url) { setMessage("Photo upload nahi ho payi. Dobara try karein."); return; }
+      setF((x) => ({ ...x, [key]: url }));
+      setMessage("Photo upload ho gayi. Profile save karna na bhoolein.");
+    } catch (e) {
+      setMessage(e?.message || "Photo upload nahi ho payi.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const save = async () => {
+    if (busy || saving) return;
+    setSaving(true);
+    setMessage("");
+    try {
+      const ok = await onSave(shop.id, { about: f.about || null, whatsapp: f.whatsapp || null, opening_hours: f.opening_hours || null, logo_url: f.logo_url || null, cover_url: f.cover_url || null });
+      setMessage(ok ? "Shop profile successfully save ho gayi." : "Profile save confirm nahi hui. Error check karke dobara try karein.");
+    } catch (e) {
+      setMessage(e?.message || "Profile save nahi hui.");
+    } finally {
+      setSaving(false);
+    }
   };
   const input = "w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-white";
   return <div className="bg-white rounded-2xl p-4 border border-gray-100 space-y-3">
@@ -26,7 +48,8 @@ export default function ShopProfileEditor({ shop, uploadImage, onSave }) {
     <textarea value={f.about} onChange={(e) => setF({ ...f, about: e.target.value })} placeholder="Shop ke bare me (optional)" rows={2} className={input}/>
     <input value={f.whatsapp} onChange={(e) => setF({ ...f, whatsapp: e.target.value.replace(/[^\d+]/g, "") })} placeholder="WhatsApp number (optional)" className={input}/>
     <input value={f.opening_hours} onChange={(e) => setF({ ...f, opening_hours: e.target.value })} placeholder="Opening hours, jaise 9:00 AM – 9:00 PM" className={input}/>
-    <button disabled={busy} onClick={() => onSave(shop.id, { about: f.about || null, whatsapp: f.whatsapp || null, opening_hours: f.opening_hours || null, logo_url: f.logo_url || null, cover_url: f.cover_url || null })} className="w-full bg-violet-600 disabled:opacity-50 text-white font-bold py-3 rounded-xl">{busy ? "Uploading…" : "Profile save karo"}</button>
+    <button disabled={busy || saving} onClick={save} className="w-full bg-violet-600 disabled:opacity-50 text-white font-bold py-3 rounded-xl">{busy ? "Uploading…" : saving ? "Saving…" : "Profile save karo"}</button>
+    {message && <div role="status" className="text-xs rounded-xl bg-violet-50 text-violet-700 p-3">{message}</div>}
     <div className="text-[10px] text-gray-400">Logo/cover upload existing "product-images" storage bucket use karta hai.</div>
   </div>;
 }
