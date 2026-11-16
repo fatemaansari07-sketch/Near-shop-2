@@ -7,6 +7,14 @@ import { FEED_PRO_PRICE, useFeedPro } from "../../lib/platform";
 
 const VIDEO_OK = /^https:\/\/([a-z0-9-]+\.)*(instagram\.com|youtube\.com|youtu\.be|facebook\.com|fb\.watch)(\/|$)/i;
 const ytId = (u) => { const m = String(u || "").match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/))([\w-]{11})/i); return m ? m[1] : null; };
+// In-app player URLs. YouTube/Instagram/Facebook all provide official embed pages; they only work for PUBLIC videos.
+function embedOf(u) {
+  const y = ytId(u); if (y) return { src: `https://www.youtube-nocookie.com/embed/${y}`, kind: "yt" };
+  const ig = String(u || "").match(/instagram\.com\/(?:[\w.]+\/)?(reels?|p|tv)\/([\w-]+)/i);
+  if (ig) return { src: `https://www.instagram.com/${/^reel/i.test(ig[1]) ? "reel" : ig[1]}/${ig[2]}/embed`, kind: "ig" };
+  if (/facebook\.com|fb\.watch/i.test(u || "")) return { src: `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(u)}&show_text=false`, kind: "fb" };
+  return null;
+}
 const videoLabel = (u) => /instagram/i.test(u) ? "Instagram" : /youtu/i.test(u) ? "YouTube" : "Facebook";
 
 // Same rule as the Deals screen: live discount from the product's own active promotion.
@@ -73,7 +81,6 @@ function PostCard({ post, shop, me, isMine, followed, followers, liked, canReply
   const product = post.productId ? shop?.products?.find((p) => p.id === post.productId && !p.archived_at) : null;
   const lp = product ? livePrice(product) : null;
   const img = post.imageUrl || product?.imageUrl;
-  const yt = ytId(post.videoUrl);
   const hidePrice = shop?.hideProductPrices;
   return (
     <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
@@ -102,9 +109,10 @@ function PostCard({ post, shop, me, isMine, followed, followers, liked, canReply
         </button>
       )}
       {post.productId && !product && <div className="mx-4 mt-3 text-[11px] text-gray-400">Ye product ab available nahi hai.</div>}
-      {post.videoUrl && (yt
-        ? <div className="mx-4 mt-3 aspect-video rounded-xl overflow-hidden bg-black"><iframe title="video" src={`https://www.youtube-nocookie.com/embed/${yt}`} className="w-full h-full" allow="encrypted-media; picture-in-picture" allowFullScreen loading="lazy" /></div>
-        : <a href={post.videoUrl} target="_blank" rel="noopener noreferrer" className="mx-4 mt-3 block text-center text-sm font-bold text-violet-700 bg-violet-50 border border-violet-100 rounded-xl py-2.5">▶ {videoLabel(post.videoUrl)} par video dekho</a>)}
+      {post.videoUrl && (() => { const em = embedOf(post.videoUrl); return <div className="mx-4 mt-3">
+        {em && <div className={`rounded-xl overflow-hidden bg-black ${em.kind === "yt" ? "aspect-video" : "h-[480px]"}`}><iframe title="video" src={em.src} className="w-full h-full" allow="encrypted-media; picture-in-picture; fullscreen" allowFullScreen loading="lazy" /></div>}
+        <a href={post.videoUrl} target="_blank" rel="noopener noreferrer" className="block text-center text-[11px] text-violet-600 font-semibold mt-1">{em ? `Video nahi chal rahi? ${videoLabel(post.videoUrl)} par kholein ↗` : `▶ ${videoLabel(post.videoUrl)} par video dekho`}</a>
+      </div>; })()}
       <div className="flex items-center gap-5 px-4 py-3 text-sm">
         <button onClick={() => onLike(post.id, liked)} className={`font-semibold ${liked ? "text-red-500" : "text-gray-500"}`}>{liked ? "❤️" : "🤍"} {post.likes}</button>
         <button onClick={() => setOpen((v) => !v)} className="font-semibold text-gray-500">💬 {cc}</button>
