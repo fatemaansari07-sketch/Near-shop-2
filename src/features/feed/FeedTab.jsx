@@ -9,11 +9,27 @@ const VIDEO_OK = /^https:\/\/([a-z0-9-]+\.)*(instagram\.com|youtube\.com|youtu\.
 const ytId = (u) => { const m = String(u || "").match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/))([\w-]{11})/i); return m ? m[1] : null; };
 // In-app player URLs. YouTube/Instagram/Facebook all provide official embed pages; they only work for PUBLIC videos.
 function embedOf(u) {
-  const y = ytId(u); if (y) return { src: `https://www.youtube-nocookie.com/embed/${y}`, kind: "yt" };
-  const ig = String(u || "").match(/instagram\.com\/(?:[\w.]+\/)?(reels?|p|tv)\/([\w-]+)/i);
+  const url = String(u || "");
+  const y = ytId(url); if (y) return { src: `https://www.youtube-nocookie.com/embed/${y}`, kind: "yt", ratio: /\/shorts\//i.test(url) ? "9 / 16" : "16 / 9" };
+  const ig = url.match(/instagram\.com\/(?:[\w.]+\/)?(reels?|p|tv)\/([\w-]+)/i);
   if (ig) return { src: `https://www.instagram.com/${/^reel/i.test(ig[1]) ? "reel" : ig[1]}/${ig[2]}/embed`, kind: "ig" };
-  if (/facebook\.com|fb\.watch/i.test(u || "")) return { src: `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(u)}&show_text=false`, kind: "fb" };
+  if (/facebook\.com|fb\.watch/i.test(url)) return { src: `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(url)}&show_text=false`, kind: "fb", ratio: /\/reel\/|\/reels\//i.test(url) ? "9 / 16" : "16 / 9" };
   return null;
+}
+// Instagram's embed page reports its real height by postMessage; follow it so the video keeps its own shape.
+function VideoEmbed({ em }) {
+  const [h, setH] = useState(em.kind === "ig" ? 620 : null);
+  useEffect(() => {
+    if (em.kind !== "ig") return;
+    const on = (e) => {
+      if (!/instagram\.com$/i.test(new URL(e.origin).hostname)) return;
+      try { const d = typeof e.data === "string" ? JSON.parse(e.data) : e.data; const ht = d?.details?.height ?? d?.height; if (d?.type === "MEASURE" && ht > 100) setH(Math.min(1100, Math.round(ht))); } catch {}
+    };
+    window.addEventListener("message", on);
+    return () => window.removeEventListener("message", on);
+  }, [em.kind]);
+  const style = em.kind === "ig" ? { height: h } : { aspectRatio: em.ratio, maxHeight: "75vh", margin: "0 auto" };
+  return <div className="rounded-xl overflow-hidden bg-black w-full" style={style}><iframe title="video" src={em.src} className="w-full h-full block" allow="encrypted-media; picture-in-picture; fullscreen" allowFullScreen loading="lazy" /></div>;
 }
 const videoLabel = (u) => /instagram/i.test(u) ? "Instagram" : /youtu/i.test(u) ? "YouTube" : "Facebook";
 
@@ -80,7 +96,7 @@ function PostCard({ post, shop, me, isMine, followed, followers, liked, canReply
   useEffect(() => setCc(post.comments), [post.comments]);
   const product = post.productId ? shop?.products?.find((p) => p.id === post.productId && !p.archived_at) : null;
   const lp = product ? livePrice(product) : null;
-  const img = post.imageUrl || product?.imageUrl;
+  const img = post.videoUrl ? null : post.imageUrl || product?.imageUrl;
   const hidePrice = shop?.hideProductPrices;
   return (
     <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
@@ -92,7 +108,7 @@ function PostCard({ post, shop, me, isMine, followed, followers, liked, canReply
         {isMine ? <button onClick={() => onDelete(post.id)} className="text-[11px] text-red-500 font-semibold">Delete</button>
           : shop && me && <button onClick={() => onFollow(shop.id, followed)} className={`text-xs font-bold px-3 py-1.5 rounded-full ${followed ? "bg-gray-100 text-gray-600" : "bg-emerald-600 text-white"}`}>{followed ? "Following ✓" : "+ Follow"}</button>}
       </div>
-      {img && <img src={img} alt="" loading="lazy" className="w-full max-h-80 object-cover mt-3" />}
+      {img && <img src={img} alt="" loading="lazy" className="w-full h-auto block mt-3" />}
       {post.text && <div className="px-4 mt-3 text-sm text-gray-700 whitespace-pre-wrap break-words">{post.text}</div>}
       {product && lp && (
         <button onClick={() => onOpenShop?.(shop, product)} className="mx-4 mt-3 w-[calc(100%-2rem)] text-left flex items-center justify-between gap-3 bg-orange-50 border border-orange-100 rounded-xl p-3">
@@ -110,7 +126,7 @@ function PostCard({ post, shop, me, isMine, followed, followers, liked, canReply
       )}
       {post.productId && !product && <div className="mx-4 mt-3 text-[11px] text-gray-400">Ye product ab available nahi hai.</div>}
       {post.videoUrl && (() => { const em = embedOf(post.videoUrl); return <div className="mx-4 mt-3">
-        {em && <div className={`rounded-xl overflow-hidden bg-black ${em.kind === "yt" ? "aspect-video" : "h-[480px]"}`}><iframe title="video" src={em.src} className="w-full h-full" allow="encrypted-media; picture-in-picture; fullscreen" allowFullScreen loading="lazy" /></div>}
+        {em && <VideoEmbed em={em} />}
         <a href={post.videoUrl} target="_blank" rel="noopener noreferrer" className="block text-center text-[11px] text-violet-600 font-semibold mt-1">{em ? `Video nahi chal rahi? ${videoLabel(post.videoUrl)} par kholein ↗` : `▶ ${videoLabel(post.videoUrl)} par video dekho`}</a>
       </div>; })()}
       <div className="flex items-center gap-5 px-4 py-3 text-sm">
@@ -129,17 +145,19 @@ function Composer({ ownedShops, feedPro, followerCount, onDone, onClose }) {
   const [productId, setProductId] = useState("");
   const [video, setVideo] = useState("");
   const [file, setFile] = useState(null);
+  const [media, setMedia] = useState("photo");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const products = (shop?.products || []).filter((p) => !p.archived_at);
   const submit = async () => {
     setErr("");
-    const v = video.trim();
+    const v = media === "video" ? video.trim() : "";
+    const picked = media === "photo" ? file : null;
     if (v && !VIDEO_OK.test(v)) return setErr("Video link sirf Instagram / YouTube / Facebook (https) ka ho sakta hai.");
-    if (!text.trim() && !file && !productId && !v) return setErr("Kuch to likhiye ya photo / product chuniye.");
+    if (!text.trim() && !picked && !productId && !v) return setErr("Kuch to likhiye ya photo / product chuniye.");
     setBusy(true);
     let imageUrl = null;
-    if (file) { imageUrl = await uploadProductImage(shop.id, file); if (!imageUrl) { setBusy(false); return setErr("Photo upload nahi hui. Dobara try karein."); } }
+    if (picked) { imageUrl = await uploadProductImage(shop.id, picked); if (!imageUrl) { setBusy(false); return setErr("Photo upload nahi hui. Dobara try karein."); } }
     const { error } = await supabase.from("feed_posts").insert({ shop_id: shop.id, text: text.trim(), v2: true, image_url: imageUrl, video_url: v || null, product_id: productId || null });
     setBusy(false);
     if (error) return setErr(/v2|column|image_url/i.test(error.message) ? "Database update baaki hai (SQL migration 20261113 chalayein)." : error.message);
@@ -151,12 +169,15 @@ function Composer({ ownedShops, feedPro, followerCount, onDone, onClose }) {
         <div className="flex justify-between items-center mb-3"><div className="font-bold">Naya Post</div><button onClick={onClose} className="text-xl leading-none">×</button></div>
         {ownedShops.length > 1 && <select value={shopId} onChange={(e) => { setShopId(e.target.value); setProductId(""); }} className="w-full border rounded-xl px-3 py-2.5 text-sm mb-2">{ownedShops.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>}
         <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} maxLength={1000} placeholder="Customers ko kya batana hai?" className="w-full border border-gray-200 rounded-xl p-3 text-sm outline-none" />
-        <label className="block mt-2 text-xs text-gray-500">📷 Photo (optional)
-          <input type="file" accept="image/*" onChange={(e) => setFile(e.target.files?.[0] || null)} className="w-full text-sm mt-1" /></label>
+        <div className="flex gap-2 mt-3">
+          {[["photo", "📷 Photo"], ["video", "▶ Video link"]].map(([k, l]) => <button type="button" key={k} onClick={() => setMedia(k)} className={`flex-1 py-2 rounded-xl text-sm font-bold ${media === k ? "bg-emerald-600 text-white" : "bg-gray-100 text-gray-600"}`}>{l}</button>)}
+        </div>
+        <div className="text-[10px] text-gray-400 mt-1">Ek post me ya photo ya video, dono nahi (Instagram jaisa).</div>
+        {media === "photo"
+          ? <input type="file" accept="image/*" onChange={(e) => setFile(e.target.files?.[0] || null)} className="w-full text-sm mt-2" />
+          : <input value={video} onChange={(e) => setVideo(e.target.value)} placeholder="Instagram / YouTube / Facebook link https://…" className="w-full border rounded-xl px-3 py-2.5 text-sm mt-2" />}
         <label className="block mt-2 text-xs text-gray-500">🏷️ Product jodein (price aur discount apne aap live dikhega)
           <select value={productId} onChange={(e) => setProductId(e.target.value)} className="w-full border rounded-xl px-3 py-2.5 text-sm mt-1"><option value="">— koi product nahi —</option>{products.map((p) => { const l = livePrice(p); return <option key={p.id} value={p.id}>{p.name} · {formatINR(l.now)}{l.pct ? ` (${l.pct}% off)` : ""}</option>; })}</select></label>
-        <label className="block mt-2 text-xs text-gray-500">▶ Video link (Instagram / YouTube / Facebook, optional)
-          <input value={video} onChange={(e) => setVideo(e.target.value)} placeholder="https://…" className="w-full border rounded-xl px-3 py-2.5 text-sm mt-1" /></label>
         <div className={`mt-3 text-[11px] rounded-xl p-2.5 ${feedPro ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800"}`}>
           {feedPro ? "✅ Feed Pro active: ye post nearby sabhi users ko dikhega, aur aap comments ka reply kar sakte hain."
             : `Abhi ye post sirf aapke ${followerCount} followers ko dikhega. Sabko dikhane aur reply dene ke liye Feed Pro (₹${FEED_PRO_PRICE}/mahina) lein. Payment ke baad admin activate karta hai.`}
