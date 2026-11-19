@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { supabase } from "../../supabaseClient";
-import { formatINR } from "../../data/mockData";
+import { formatINR, daysToExpiry } from "../../data/mockData";
+import { displayPackStock } from "../../lib/inventory";
 import { planRank, DEFAULT_PLANS } from "../../lib/platform";
 import { KhataByShop } from "../khata/KhataScreen";
 
@@ -10,6 +11,38 @@ const iso = (d) => d.toISOString().slice(0, 10);
 const TONES = { violet: "bg-violet-50 text-violet-700", emerald: "bg-emerald-50 text-emerald-700", amber: "bg-amber-50 text-amber-700" };
 const Tile = ({ label, value, tone = "violet" }) => <div className={`rounded-2xl p-3 ${TONES[tone].split(" ")[0]}`}><div className="text-[10px] text-gray-500">{label}</div><div className={`text-lg font-extrabold ${TONES[tone].split(" ")[1]}`}>{value}</div></div>;
 const Locked = ({ title }) => <div className="bg-gray-100 rounded-2xl p-4 text-center text-xs text-gray-500">🔒 {title} — Business Pro plan me</div>;
+
+
+const stockText = (p) => (p.unit === "pack" ? displayPackStock(p.stock, p.packSize || 10) : `${p.stock ?? 0} ${({ weight: "kg", volume: "L", length: "m" }[p.unit] || "pcs")}`);
+// Search one product across ALL your shops: which shop has how much stock, price and expiry.
+function StockAcrossShops({ shops }) {
+  const [q, setQ] = useState("");
+  const term = q.trim().toLowerCase();
+  const groups = useMemo(() => {
+    if (term.length < 2) return [];
+    const m = new Map();
+    shops.forEach((sh) => (sh.products || []).forEach((p) => {
+      if (p.archived_at || !String(p.name || "").toLowerCase().includes(term)) return;
+      const k = String(p.name).trim().toLowerCase();
+      if (!m.has(k)) m.set(k, { name: p.name, rows: [] });
+      m.get(k).rows.push({ shop: sh.name, stock: Number(p.stock) || 0, text: stockText(p), price: p.price, days: daysToExpiry(p.expiryDate) });
+    }));
+    return [...m.values()].map((g) => ({ ...g, rows: g.rows.sort((a, b) => b.stock - a.stock), total: g.rows.reduce((a, r) => a + r.stock, 0) })).slice(0, 15);
+  }, [shops, term]);
+  return <div className="bg-white rounded-2xl p-4 border border-gray-100">
+    <div className="font-extrabold text-sm mb-1">🔎 Sab dukaano me stock dhundo</div>
+    <div className="text-[10px] text-gray-400 mb-2">Product ka naam likho, dekho kis dukan me kitna maal hai.</div>
+    <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Jaise: Paracetamol" className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm"/>
+    {term.length >= 2 && !groups.length && <div className="text-xs text-gray-400 mt-2">Kisi bhi dukaan me ye product nahi mila.</div>}
+    {groups.map((g) => <div key={g.name} className="mt-3">
+      <div className="flex justify-between text-sm"><b>{g.name}</b><span className="text-[11px] text-gray-500">{g.rows.length} dukaan{g.rows.length > 1 ? "" : ""}</span></div>
+      {g.rows.map((r, i) => <div key={i} className="flex items-center justify-between text-xs py-1.5 border-t border-gray-50">
+        <div className="min-w-0"><div className="font-semibold truncate">🏪 {r.shop}</div><div className="text-[10px] text-gray-400">{formatINR(r.price)}{r.days != null ? ` · ${r.days < 0 ? "expire ho chuka" : `${r.days} din expiry`}` : ""}</div></div>
+        <div className={`font-extrabold shrink-0 ${r.stock <= 0 ? "text-red-500" : r.stock <= 5 ? "text-amber-600" : "text-emerald-600"}`}>{r.stock <= 0 ? "Stock khatam" : r.text}</div>
+      </div>)}
+    </div>)}
+  </div>;
+}
 
 // Combined multi-shop dashboard. All numbers come from the owner_business_overview RPC, which re-checks ownership
 // and plan on the server and returns aggregates only (no customer identity).
@@ -46,6 +79,7 @@ export function OwnerDashboard({ shops, plan, plans = DEFAULT_PLANS, onBack, onO
         <div className="grid grid-cols-2 gap-2"><Tile label="Total shops" value={totals.shops}/><Tile label="Total products" value={totals.products}/><Tile label="Combined sales" value={formatINR(totals.revenue)} tone="emerald"/><Tile label="Pending Udhar" value={formatINR(totals.udhar)} tone="amber"/></div>
         <div className="bg-white rounded-2xl p-4 border border-gray-100"><div className="font-extrabold text-sm mb-2">Shop-wise performance</div>
           {data.shops.map((x) => <div key={x.shop_id} className="mb-3"><div className="flex justify-between text-xs"><button onClick={() => onOpenShopReport(x.shop_id)} className="font-bold text-violet-700 text-left truncate">{x.name} ›</button><span className="font-bold">{formatINR(Number(x.revenue))}</span></div><div className="h-2 rounded bg-gray-100 mt-1"><div className="h-2 rounded bg-violet-500" style={{ width: `${(Number(x.revenue) / maxRev) * 100}%` }}/></div><div className="text-[10px] text-gray-400 mt-0.5">{x.bills} bills · {x.products} products · low stock {x.low_stock} · udhar {formatINR(Number(x.pending_udhar))}</div></div>)}</div>
+        <StockAcrossShops shops={shops} />
         <KhataByShop shops={shops} onOpen={onOpenKhata} />
         <div className="bg-white rounded-2xl p-4 border border-gray-100"><div className="font-extrabold text-sm mb-2">Best-selling products{rank < 2 ? " (top 5)" : ""}</div>{data.best_sellers.length === 0 && <div className="text-xs text-gray-400">Is period me sales nahi.</div>}{data.best_sellers.map((b) => <div key={b.name} className="flex justify-between text-xs py-1.5 border-b border-gray-50"><span className="truncate pr-2">{b.name} <span className="text-gray-400">· {b.shops} shop</span></span><b>{formatINR(Number(b.revenue))}</b></div>)}</div>
         {rank >= 2 ? <>
