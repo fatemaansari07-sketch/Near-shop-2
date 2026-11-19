@@ -5,6 +5,7 @@ import { isPromotionActive } from "../promotions/promotionService";
 import { uploadProductImage } from "../../lib/uploadImage";
 import { FEED_PRO_PRICE, useFeedPro } from "../../lib/platform";
 import PromotionPanel from "../promotions/PromotionPanel";
+import ShopPicker from "../../components/ShopPicker";
 
 const VIDEO_OK = /^https:\/\/([a-z0-9-]+\.)*(instagram\.com|youtube\.com|youtu\.be|facebook\.com|fb\.watch)(\/|$)/i;
 const ytId = (u) => { const m = String(u || "").match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/))([\w-]{11})/i); return m ? m[1] : null; };
@@ -150,7 +151,8 @@ function Composer({ ownedShops, feedPro, followerCount, onDone, onClose, onPromo
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [showPromo, setShowPromo] = useState(false);
-  const [allShops, setAllShops] = useState(false);
+  const [mode, setMode] = useState("one");
+  const [picked, setPicked] = useState(() => new Set());
   const products = (shop?.products || []).filter((p) => !p.archived_at);
   const submit = async () => {
     setErr("");
@@ -162,7 +164,8 @@ function Composer({ ownedShops, feedPro, followerCount, onDone, onClose, onPromo
     let imageUrl = null;
     if (picked) { imageUrl = await uploadProductImage(shop.id, picked); if (!imageUrl) { setBusy(false); return setErr("Photo upload nahi hui. Dobara try karein."); } }
     const chosenProduct = products.find((p) => p.id === productId);
-    const targets = allShops && ownedShops.length > 1 ? ownedShops : [shop];
+    const targets = mode === "all" ? ownedShops : mode === "pick" ? ownedShops.filter((x) => picked.has(x.id)) : [shop];
+    if (!targets.length) { setBusy(false); return setErr("Kam se kam ek dukaan chuniye."); }
     const rows = targets.map((sh) => {
       // same product in another shop = match by name; if that shop doesn't stock it the post goes without product card
       const pid = sh.id === shop.id ? productId || null : (chosenProduct && (sh.products || []).find((p) => !p.archived_at && String(p.name).trim().toLowerCase() === String(chosenProduct.name).trim().toLowerCase())?.id) || null;
@@ -198,7 +201,7 @@ function Composer({ ownedShops, feedPro, followerCount, onDone, onClose, onPromo
           <button type="button" onClick={() => setShowPromo((v) => !v)} className="w-full text-left text-sm font-bold text-violet-700 bg-violet-50 border border-violet-100 rounded-xl px-3 py-2.5">{showPromo ? "▾" : "▸"} 🚀 Is product par offer / promotion lagao (optional)</button>
           {showPromo && <div className="mt-2"><PromotionPanel productOnly shops={[shop]} onPromote={promoteAndPost} initialProductId={productId} /><div className="text-[10px] text-gray-400 mt-1">Offer lagate hi ye post Feed me bhi chala jayega aur Deals me bhi dikhega.</div></div>}
         </div>}
-        {ownedShops.length > 1 && <label className="flex items-center gap-2 mt-3 text-sm font-semibold"><input type="checkbox" checked={allShops} onChange={(e) => setAllShops(e.target.checked)} className="w-4 h-4"/>Apni sab {ownedShops.length} dukaano par post karo</label>}
+        {ownedShops.length > 1 && <ShopPicker allowOne shops={ownedShops} mode={mode} setMode={setMode} picked={picked} setPicked={setPicked} />}
         <div className={`mt-3 text-[11px] rounded-xl p-2.5 ${feedPro ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800"}`}>
           {feedPro ? "✅ Feed Pro active: ye post nearby sabhi users ko dikhega, aur aap comments ka reply kar sakte hain."
             : `Abhi ye post sirf aapke ${followerCount} followers ko dikhega. Sabko dikhane aur reply dene ke liye Feed Pro (₹${FEED_PRO_PRICE}/mahina) lein. Payment ke baad admin activate karta hai.`}
