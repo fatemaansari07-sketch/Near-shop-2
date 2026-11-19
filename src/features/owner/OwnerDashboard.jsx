@@ -44,6 +44,37 @@ function StockAcrossShops({ shops }) {
   </div>;
 }
 
+
+// One-tap "Aaj ka report" -> opens WhatsApp with the message ready (pick any contact / yourself).
+// NOTE: fully automatic daily sending needs WhatsApp Business API (paid) + a server scheduler; this is the free manual version.
+function WhatsAppReport({ shops }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const send = async () => {
+    setBusy(true); setMsg("");
+    const today = iso(new Date());
+    const { data, error } = await supabase.rpc("owner_business_overview", { p_from: new Date(today + "T00:00:00+05:30").toISOString(), p_to: new Date(today + "T23:59:59+05:30").toISOString() });
+    setBusy(false);
+    if (error || !data) return setMsg(error?.message?.includes("PLAN_REQUIRED") ? "Ye feature Multi-Shop plan me hai." : "Report ban nahi payi. Dobara try karein.");
+    const byId = Object.fromEntries(shops.map((x) => [x.id, x]));
+    let tR = 0, tU = 0;
+    const lines = (data.shops || []).map((x) => {
+      const exp = (byId[x.shop_id]?.products || []).filter((p) => !p.archived_at && p.expiryDate && (daysToExpiry(p.expiryDate) ?? 999) <= 30).length;
+      tR += Number(x.revenue) || 0; tU += Number(x.pending_udhar) || 0;
+      return `🏪 *${x.name}*\n  Bikri: ${formatINR(x.revenue)} (${x.bills || 0} bill)\n  Udhar baaki: ${formatINR(x.pending_udhar)}\n  Kam stock: ${x.low_stock} item${exp ? ` · 30 din me expiry: ${exp}` : ""}`;
+    });
+    const text = `📊 *NearShop — Aaj ka report* (${new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short" })})\n\n${lines.join("\n\n")}\n\n💰 *Kul bikri: ${formatINR(tR)}*\n📒 *Kul udhar baaki: ${formatINR(tU)}*`;
+    const url = `https://wa.me/?text=${encodeURIComponent(text)}`;
+    if (!window.open(url, "_blank")) { try { await navigator.clipboard.writeText(text); setMsg("Report copy ho gayi, WhatsApp me paste karein."); } catch { setMsg(text); } }
+  };
+  return <div className="bg-green-50 border border-green-100 rounded-2xl p-4">
+    <div className="font-extrabold text-sm">📲 Aaj ka report WhatsApp par</div>
+    <div className="text-[10px] text-gray-500 mt-0.5 mb-2">Sab dukaano ki aaj ki bikri, udhar aur kam stock ek message me. Button dabao, WhatsApp khulega, apna ya kisi ka bhi chat chuno aur bhej do.</div>
+    <button onClick={send} disabled={busy} className="w-full bg-green-600 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm">{busy ? "Bana raha hu…" : "WhatsApp par bhejo"}</button>
+    {msg && <div className="text-[11px] text-gray-600 mt-2 whitespace-pre-wrap">{msg}</div>}
+  </div>;
+}
+
 // Combined multi-shop dashboard. All numbers come from the owner_business_overview RPC, which re-checks ownership
 // and plan on the server and returns aggregates only (no customer identity).
 export function OwnerDashboard({ shops, plan, plans = DEFAULT_PLANS, onBack, onOpenShopReport, onOpenKhata }) {
@@ -79,6 +110,7 @@ export function OwnerDashboard({ shops, plan, plans = DEFAULT_PLANS, onBack, onO
         <div className="grid grid-cols-2 gap-2"><Tile label="Total shops" value={totals.shops}/><Tile label="Total products" value={totals.products}/><Tile label="Combined sales" value={formatINR(totals.revenue)} tone="emerald"/><Tile label="Pending Udhar" value={formatINR(totals.udhar)} tone="amber"/></div>
         <div className="bg-white rounded-2xl p-4 border border-gray-100"><div className="font-extrabold text-sm mb-2">Shop-wise performance</div>
           {data.shops.map((x) => <div key={x.shop_id} className="mb-3"><div className="flex justify-between text-xs"><button onClick={() => onOpenShopReport(x.shop_id)} className="font-bold text-violet-700 text-left truncate">{x.name} ›</button><span className="font-bold">{formatINR(Number(x.revenue))}</span></div><div className="h-2 rounded bg-gray-100 mt-1"><div className="h-2 rounded bg-violet-500" style={{ width: `${(Number(x.revenue) / maxRev) * 100}%` }}/></div><div className="text-[10px] text-gray-400 mt-0.5">{x.bills} bills · {x.products} products · low stock {x.low_stock} · udhar {formatINR(Number(x.pending_udhar))}</div></div>)}</div>
+        <WhatsAppReport shops={shops} />
         <StockAcrossShops shops={shops} />
         <KhataByShop shops={shops} onOpen={onOpenKhata} />
         <div className="bg-white rounded-2xl p-4 border border-gray-100"><div className="font-extrabold text-sm mb-2">Best-selling products{rank < 2 ? " (top 5)" : ""}</div>{data.best_sellers.length === 0 && <div className="text-xs text-gray-400">Is period me sales nahi.</div>}{data.best_sellers.map((b) => <div key={b.name} className="flex justify-between text-xs py-1.5 border-b border-gray-50"><span className="truncate pr-2">{b.name} <span className="text-gray-400">· {b.shops} shop</span></span><b>{formatINR(Number(b.revenue))}</b></div>)}</div>
