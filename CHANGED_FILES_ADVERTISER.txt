@@ -1,0 +1,16 @@
+REPLACED: src/App.jsx
+REPLACED: src/features/profile/Profile.jsx
+REPLACED: src/features/admin/Admin.jsx
+REPLACED: src/features/admin/CampaignFeed.jsx
+REPLACED: src/features/ads/AdSlot.jsx
+REPLACED: src/features/ads/InterstitialAd.jsx
+REPLACED: src/features/discover/TopStrips.jsx
+REPLACED: src/features/promotions/pricingConfig.js
+REPLACED: DATABASE_MIGRATION_ORDER.md
+NEW: src/features/ads/AdvertiserPortal.jsx
+NEW: src/features/admin/AdvertiserAdmin.jsx
+NEW: supabase/migrations/20261128_external_advertiser_platform.sql
+NEW: docs/ADVERTISER_PLATFORM_SETUP.md
+NEW: README_ADVERTISER_PLATFORM.txt
+
+Existing shopkeeper promotions, admin campaigns, orders and Firebase push modules are retained.
