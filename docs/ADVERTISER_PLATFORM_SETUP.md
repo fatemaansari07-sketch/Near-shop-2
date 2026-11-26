@@ -74,3 +74,14 @@ Campaigns are not delivered until both advertiser account and campaign are appro
 - Exhaust a small budget in a test campaign and confirm status becomes expired.
 - Reject/pause a campaign and verify unused reserved budget returns to wallet.
 - Test advertiser account with a second user and confirm it cannot read or modify the first advertiser's campaigns.
+
+
+## Manual advertiser wallet payment details (V2)
+
+1. Run `supabase/migrations/20261129_advertiser_payment_details.sql` after the V1 advertiser migration.
+2. Open Admin → Advertisers → Payment settings.
+3. Enter the official NearShop UPI ID and payee name. Optionally add a public HTTPS QR image URL and bank transfer details.
+4. Save. Advertisers see these details in Advertiser Studio → Wallet. A supported Android UPI app can open from the Pay button; the advertiser must still enter/confirm payment in that app and submit the UTR/reference in NearShop.
+5. Admin verifies each top-up request under Admin → Advertisers → Wallet top-ups before wallet credit. Never credit based only on a screenshot or unverified claim.
+
+The Deals screen already contains the `deals` AdSlot. The advertiser delivery RPC filters approved campaigns by the selected placement, and the tracking RPC accepts `deals` for impressions/clicks. This is manual payment verification, not an automatic payment gateway.
